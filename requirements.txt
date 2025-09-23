@@ -6,3 +6,5 @@ langchain-core
 pydantic
 python-dotenv
 ollama
+httpx
+websockets

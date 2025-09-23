@@ -1,45 +1,20 @@
-# Stage 1: The "builder" stage, where we install dependencies
-FROM python:3.11-slim as builder
+# 1. Use the official image from the creator of FastAPI as the base.
+# This image is optimized for production with Gunicorn managing Uvicorn workers.
+FROM tiangolo/uvicorn-gunicorn-fastapi:python3.11
 
-# Set environment variables for Poetry
-ENV POETRY_NO_INTERACTION=1 \
-    POETRY_VIRTUALENVS_IN_PROJECT=true \
-    POETRY_CACHE_DIR=/tmp/poetry_cache
-
-# Set the working directory
+# 2. Set the working directory inside the container.
 WORKDIR /app
 
-# Install Poetry
-RUN pip install poetry
+# 3. Copy the requirements file first to leverage Docker's build cache.
+# This layer will only be re-built if the requirements.txt file changes.
+COPY ./requirements.txt .
 
-# Copy only the files that define dependencies
-# This leverages Docker's layer caching. The next step will only run if these files change.
-COPY poetry.lock pyproject.toml ./
+# 4. Install the Python dependencies.
+# --no-cache-dir ensures that pip does not store a cache, keeping the image smaller.
+RUN pip install --no-cache-dir --upgrade -r requirements.txt
 
-# Install project dependencies
-# --no-root: Don't install the project itself, just its dependencies.
-# --no-dev: Exclude development dependencies.
-RUN poetry install --no-root --no-dev
-
-# ---------------------------------------------------------------------
-
-# Stage 2: The "final" stage, for our lean production image
-FROM python:3.11-slim as final
-
-# Set the working directory
-WORKDIR /app
-
-# Set the PATH to include the virtual environment's bin directory
-ENV PATH="/app/.venv/bin:$PATH"
-
-# Copy the virtual environment with all the installed packages from the builder stage
-COPY --from=builder /app/.venv ./.venv
-
-# Copy the application source code
+# 5. Copy the rest of your application's source code into the working directory.
 COPY . .
 
-# Expose the port the app runs on
-EXPOSE 8000
-
-# Command to run the application
-CMD ["uvicorn", "your_app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# The base image provides a default command to start the server.
+# It will automatically run the 'app' variable in the 'main.py' file.
