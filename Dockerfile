@@ -1,6 +1,5 @@
-# 1. Use the official image from the creator of FastAPI as the base.
-# This image is optimized for production with Gunicorn managing Uvicorn workers.
-FROM tiangolo/uvicorn-gunicorn-fastapi:python3.11
+# Use a slim base image
+FROM python:3.11-slim-bookworm
 
 # 2. Set the working directory inside the container.
 WORKDIR /app
@@ -16,5 +15,4 @@ RUN pip install --no-cache-dir --upgrade -r requirements.txt
 # 5. Copy the rest of your application's source code into the working directory.
 COPY . .
 
-# The base image provides a default command to start the server.
-# It will automatically run the 'app' variable in the 'main.py' file.
+CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "80"]
