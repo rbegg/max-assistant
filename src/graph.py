@@ -1,4 +1,8 @@
 import httpx
+import math
+import wave
+import struct
+from io import BytesIO
 from typing import TypedDict
 from langgraph.graph import StateGraph, END
 
@@ -22,9 +26,30 @@ async def invoke_llm(state: GraphState):
 async def synthesize_speech(state: GraphState):
     """Node to convert the LLM's text response to speech using a TTS API."""
     print(f"Assistant says: {state['llm_response']}")
-    # Replace with your actual TTS API call (e.g., ElevenLabs, OpenAI TTS)
-    mock_audio = b"dummy_audio_bytes_for_" + state['llm_response'].encode('utf-8')
+    # For testing, generate a short audible tone as the audio response.
+    mock_audio = _create_test_sound()
     return {"output_audio": mock_audio}
+
+
+def _create_test_sound(duration: float = 0.5, frequency: int = 440) -> bytes:
+    """
+    Generates a sine wave and returns it as WAV-formatted bytes in memory.
+    """
+    sample_rate = 44100
+    num_samples = int(sample_rate * duration)
+    amplitude = 16000  # For 16-bit audio
+
+    # Generate PCM samples for a sine wave
+    samples = [int(amplitude * math.sin(2 * math.pi * i * frequency / sample_rate)) for i in range(num_samples)]
+
+    # Use an in-memory buffer to write the WAV file
+    with BytesIO() as wav_buffer:
+        with wave.open(wav_buffer, 'wb') as wav_file:
+            wav_file.setnchannels(1)  # Mono
+            wav_file.setsampwidth(2)  # 2 bytes = 16-bit
+            wav_file.setframerate(sample_rate)
+            wav_file.writeframes(struct.pack(f'<{len(samples)}h', *samples))
+        return wav_buffer.getvalue()
 
 
 # --- Build the Graph ---
