@@ -53,12 +53,12 @@ async def handle_stt_and_graph_responses(client_ws: WebSocket, stt_ws):
                 stt_response = json.loads(message_str)
                 transcript = stt_response.get("transcript", "").strip()
 
-                if not transcript:
+                if not stt_response["transcript"]:
                     continue
 
-                # 2. Immediately forward the extracted transcript text to the client for UI feedback
-                await client_ws.send_text(transcript)
-                logging.info(f"Forwarded transcript to client: '{transcript}'")
+                # 2. Immediately forward the json  to the client for UI feedback
+                await client_ws.send_text(message_str)
+                logging.info(f"Forwarded json to client: '{message_str}'")
 
                 # 3. If the transcript is final, trigger the assistant graph
                 if stt_response.get("is_final"):
