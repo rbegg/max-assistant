@@ -51,25 +51,52 @@ async def handle_stt_and_graph_responses(client_ws: WebSocket, stt_ws):
 
             try:
                 stt_response = json.loads(message_str)
-                transcript = stt_response.get("transcript", "").strip()
+                transcript = stt_response.get("data", "").strip()
 
-                if not stt_response["transcript"]:
+                if not transcript:
                     continue
 
                 # 2. Immediately forward the json  to the client for UI feedback
                 await client_ws.send_text(message_str)
                 logging.info(f"Forwarded json to client: '{message_str}'")
 
-                # 3. If the transcript is final, trigger the assistant graph
-                if stt_response.get("is_final"):
-                    logging.info("Invoking assistant graph with final transcript.")
-                    initial_state = {"transcribed_text": transcript}
-                    final_state = await assistant_graph.ainvoke(initial_state)
+                logging.info("Invoking assistant graph with transcript.")
+                initial_state = {"transcribed_text": transcript}
 
-                    # 4. Send the final TTS audio response back to the client
-                    if final_state and final_state.get("output_audio"):
-                        logging.info("Sending synthesized audio response to client.")
-                        await client_ws.send_bytes(final_state["output_audio"])
+                llm_response_sent = False
+                output_audio = None
+
+                async for step in assistant_graph.astream(initial_state):
+                    # Each step is a dictionary with a single key: the node name.
+                    # The value is the dictionary returned by that node.
+                    node_name = list(step.keys())[0]
+
+                    # The '__end__' key is yielded last, we don't need to parse it here.
+                    if node_name == "__end__":
+                        break
+
+                    node_output = step[node_name]
+
+                    # Check if this is the output from the 'llm' node and stream it.
+                    if not llm_response_sent and "llm_response" in node_output:
+                        llm_response = node_output["llm_response"]
+                        logging.info(f"Streaming LLM response to client: {llm_response}")
+
+                        response_payload = {
+                            "data": llm_response,
+                            "source": "assistant",
+                        }
+                        await client_ws.send_text(json.dumps(response_payload))
+                        llm_response_sent = True
+
+                    # Check if this is the output from the 'tts' node and capture the audio.
+                    if "output_audio" in node_output:
+                        output_audio = node_output["output_audio"]
+
+                # After the graph is finished, send the audio if we captured it.
+                if output_audio:
+                    logging.info("Sending synthesized audio response to client.")
+                    await client_ws.send_bytes(output_audio)
 
             except (json.JSONDecodeError, AttributeError):
                 # This could happen if the STT service sends a non-JSON message or malformed data
