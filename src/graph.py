@@ -2,9 +2,14 @@ import httpx
 import math
 import wave
 import struct
+import os
 from io import BytesIO
 from typing import TypedDict
+
+from langchain_community.chat_models import ChatOllama
+from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import StateGraph, END
+# from onnxruntime.quantization.quant_utils import model_has_external_data
 
 
 # --- Define State ---
@@ -14,13 +19,31 @@ class GraphState(TypedDict):
     output_audio: bytes
 
 
+# --- LLM and Prompt Initialization ---
+model_name = os.getenv("OLLAMA_MODEL_NAME", "llama3")
+ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+
+print(f"Ollama Base URL = {ollama_base_url} model = {model_name}")
+
+llm = ChatOllama(base_url=ollama_base_url, model=model_name, temperature=0)
+prompt = ChatPromptTemplate.from_messages(
+    [
+        ("system", "You are a helpful assistant."),
+        ("user", "{input}"),
+    ]
+)
+chain = prompt | llm
+
+
 # --- Define Graph Nodes ---
 async def invoke_llm(state: GraphState):
     """Node to get a response from an LLM."""
     print(f"User said: {state['transcribed_text']}")
-    # Replace with your actual LLM API call (e.g., to OpenAI, Anthropic, etc.)
-    response_text = f"You said '{state['transcribed_text']}'. This is a mock response from the assistant."
-    return {"llm_response": response_text}
+
+    # Invoke the pre-initialized chain
+    response = await chain.ainvoke({"input": state["transcribed_text"]})
+
+    return {"llm_response": response.content}
 
 
 async def synthesize_speech(state: GraphState):

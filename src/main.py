@@ -7,7 +7,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from websockets.client import connect as websocket_connect
 from websockets.exceptions import ConnectionClosed
 
-# Import the local graph builder
+#  #Import the local graph builder
 from .graph import create_assistant_graph
 
 # --- Configuration ---
@@ -78,7 +78,7 @@ async def handle_stt_and_graph_responses(client_ws: WebSocket, stt_ws):
                     node_output = step[node_name]
 
                     # Check if this is the output from the 'llm' node and stream it.
-                    if not llm_response_sent and "llm_response" in node_output:
+                    if node_output and not llm_response_sent and "llm_response" in node_output:
                         llm_response = node_output["llm_response"]
                         logging.info(f"Streaming LLM response to client: {llm_response}")
 
@@ -90,7 +90,7 @@ async def handle_stt_and_graph_responses(client_ws: WebSocket, stt_ws):
                         llm_response_sent = True
 
                     # Check if this is the output from the 'tts' node and capture the audio.
-                    if "output_audio" in node_output:
+                    if node_output and "output_audio" in node_output:
                         output_audio = node_output["output_audio"]
 
                 # After the graph is finished, send the audio if we captured it.
