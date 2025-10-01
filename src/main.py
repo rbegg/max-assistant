@@ -1,149 +1,112 @@
 import uvicorn
 import asyncio
 import logging
-import os
 import json
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from websockets.client import connect as websocket_connect
-from websockets.exceptions import ConnectionClosed
 
-#  #Import the local graph builder
-from .graph import create_assistant_graph
+from .graph import create_reasoning_engine
+from .stt_service import transcript_generator
+from .tts_service import synthesize_speech
 
 # --- Configuration ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-# The URL for the STT service, configurable via environment variable
-STT_WEBSOCKET_URL = os.environ.get("STT_WEBSOCKET_URL", "ws://stt/ws")
-
 app = FastAPI()
 
-# Compile the LangGraph workflow when the application starts
-assistant_graph = create_assistant_graph()
+# --- Graceful Shutdown Setup (Unchanged) ---
+shutdown_event = asyncio.Event()
+agent_task = None
 
 
-async def forward_audio_to_stt(client_ws: WebSocket, stt_ws):
-    """
-    Receives audio from the client and forwards it to the STT service
-    as a continuous stream. This runs as a concurrent task.
-    """
-    try:
-        while True:
-            audio_chunk = await client_ws.receive_bytes()
-            await stt_ws.send(audio_chunk)
-    except WebSocketDisconnect:
-        logging.info("Client disconnected. Audio forwarding task is stopping.")
-    except ConnectionClosed:
-        logging.warning("STT connection closed. Audio forwarding task is stopping.")
-    except Exception as e:
-        logging.error(f"Error in audio forwarding task: {e}", exc_info=True)
+@app.on_event("startup")
+async def on_startup():
+    global agent_task
+    logging.info("Launching agent background task...")
+    agent_task = asyncio.create_task(agent_loop())
 
 
-async def handle_stt_and_graph_responses(client_ws: WebSocket, stt_ws):
-    """
-    Receives JSON messages from STT, streams them to the client, and
-    invokes the assistant graph on "final" transcripts.
-    """
-    try:
-        while True:
-            # 1. Wait for a message from the STT service
-            message_str = await stt_ws.recv()
-
-            try:
-                stt_response = json.loads(message_str)
-                transcript = stt_response.get("data", "").strip()
-
-                if not transcript:
-                    continue
-
-                # 2. Immediately forward the json  to the client for UI feedback
-                await client_ws.send_text(message_str)
-                logging.info(f"Forwarded json to client: '{message_str}'")
-
-                logging.info("Invoking assistant graph with transcript.")
-                initial_state = {"transcribed_text": transcript}
-
-                llm_response_sent = False
-                output_audio = None
-
-                async for step in assistant_graph.astream(initial_state):
-                    # Each step is a dictionary with a single key: the node name.
-                    # The value is the dictionary returned by that node.
-                    node_name = list(step.keys())[0]
-
-                    # The '__end__' key is yielded last, we don't need to parse it here.
-                    if node_name == "__end__":
-                        break
-
-                    node_output = step[node_name]
-
-                    # Check if this is the output from the 'llm' node and stream it.
-                    if node_output and not llm_response_sent and "llm_response" in node_output:
-                        llm_response = node_output["llm_response"]
-                        logging.info(f"Streaming LLM response to client: {llm_response}")
-
-                        response_payload = {
-                            "data": llm_response,
-                            "source": "assistant",
-                        }
-                        await client_ws.send_text(json.dumps(response_payload))
-                        llm_response_sent = True
-
-                    # Check if this is the output from the 'tts' node and capture the audio.
-                    if node_output and "output_audio" in node_output:
-                        output_audio = node_output["output_audio"]
-
-                # After the graph is finished, send the audio if we captured it.
-                if output_audio:
-                    logging.info("Sending synthesized audio response to client.")
-                    await client_ws.send_bytes(output_audio)
-
-            except (json.JSONDecodeError, AttributeError):
-                # This could happen if the STT service sends a non-JSON message or malformed data
-                logging.warning(f"Could not decode or parse STT message: {message_str}")
-                continue
-
-    except ConnectionClosed:
-        logging.info("STT connection closed. Response handler is stopping.")
-    except Exception as e:
-        logging.error(f"Error in STT response handler: {e}", exc_info=True)
+@app.on_event("shutdown")
+async def on_shutdown():
+    global agent_task
+    logging.info("Shutdown event received. Signaling agent to stop.")
+    shutdown_event.set()
+    if agent_task:
+        try:
+            await asyncio.wait_for(agent_task, timeout=5.0)
+        except asyncio.TimeoutError:
+            logging.warning("Agent task did not finish in time, cancelling.")
+            agent_task.cancel()
+        except asyncio.CancelledError:
+            logging.info("Agent task was cancelled.")
+    logging.info("Shutdown complete.")
 
 
+# --- Background Agent Task (Unchanged) ---
+async def agent_loop():
+    while not shutdown_event.is_set():
+        try:
+            await asyncio.sleep(0.1)
+        except asyncio.CancelledError:
+            logging.info("Agent loop cancelled.")
+            break
+    logging.info("Agent loop has stopped.")
+
+
+# --- WebSocket Endpoint (Updated) ---
 @app.websocket("/ws")
 async def websocket_endpoint(client_ws: WebSocket):
-    """
-    Manages the bidirectional WebSocket bridge between the client and STT service.
-    """
     await client_ws.accept()
     logging.info("Client connected.")
 
-    stt_ws = None
+    # CHANGE 1: Initialize conversation state for the duration of this connection
+    conversation_state = {"messages": []}
+
     try:
-        async with websocket_connect(STT_WEBSOCKET_URL) as stt_ws:
-            logging.info(f"Connected to STT service at {STT_WEBSOCKET_URL}.")
+        async for stt_message_str in transcript_generator(client_ws):
+            try:
+                stt_response = json.loads(stt_message_str)
+                transcript = stt_response.get("data", "").strip()
+                if not transcript:
+                    continue
 
-            # Run concurrent tasks for bidirectional streaming
-            audio_forwarder_task = asyncio.create_task(forward_audio_to_stt(client_ws, stt_ws))
-            stt_handler_task = asyncio.create_task(handle_stt_and_graph_responses(client_ws, stt_ws))
+                await client_ws.send_text(stt_message_str)
 
-            # Wait for either task to complete (indicating a disconnection)
-            done, pending = await asyncio.wait(
-                [audio_forwarder_task, stt_handler_task],
-                return_when=asyncio.FIRST_COMPLETED,
-            )
+                # CHANGE 2: Update the input to include the current conversation state
+                inputs = {
+                    "transcribed_text": transcript,
+                    "messages": conversation_state.get("messages", [])
+                }
 
-            # Clean up by canceling the other running task
-            for task in pending:
-                task.cancel()
-            for task in done:
-                if task.exception():
-                    raise task.exception()
+                # The engine now receives the history and returns the updated state
+                final_state = await reasoning_engine.ainvoke(inputs)
 
+                # CHANGE 3: Persist the updated state for the next turn
+                conversation_state = final_state
+
+                # CHANGE 4: Extract the response from the last message in the list
+                llm_response = ""
+                if final_state.get("messages") and len(final_state["messages"]) > 0:
+                    last_message = final_state["messages"][-1]
+                    llm_response = last_message.content
+
+                response_payload = {"data": llm_response, "source": "assistant"}
+                await client_ws.send_text(json.dumps(response_payload))
+
+                output_audio = await synthesize_speech(llm_response)
+                await client_ws.send_bytes(output_audio)
+
+            except (json.JSONDecodeError, AttributeError) as e:
+                logging.warning(f"Could not parse STT message: {stt_message_str} ({e})")
+                continue
+    except WebSocketDisconnect:
+        logging.info("Client disconnected.")
     except Exception as e:
-        logging.error(f"An error occurred in the main WebSocket endpoint: {e}", exc_info=True)
+        logging.error(f"Main WebSocket endpoint error: {e}", exc_info=True)
     finally:
         logging.info("Client connection handler finished.")
 
+
+# --- Reasoning Engine (Unchanged) ---
+reasoning_engine = create_reasoning_engine()
 
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=9000)
