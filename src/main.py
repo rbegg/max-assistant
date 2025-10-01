@@ -12,36 +12,25 @@ from .tts_service import synthesize_speech
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 app = FastAPI()
 
-# --- Graceful Shutdown Setup ---
-# 1. Create a global event to signal shutdown
+# --- Graceful Shutdown Setup (Unchanged) ---
 shutdown_event = asyncio.Event()
-# 2. A global placeholder to hold our background task
 agent_task = None
 
 
-# --- App Events (Startup and Shutdown) ---
 @app.on_event("startup")
 async def on_startup():
-    """Launches the agent loop as a background task."""
     global agent_task
     logging.info("Launching agent background task...")
-    # 3. Create and store the background task
     agent_task = asyncio.create_task(agent_loop())
 
 
 @app.on_event("shutdown")
 async def on_shutdown():
-    """Gracefully stops the background agent task."""
     global agent_task
     logging.info("Shutdown event received. Signaling agent to stop.")
-
-    # 4. Signal the agent loop to stop
     shutdown_event.set()
-
-    # 5. Wait for the task to finish or cancel it
     if agent_task:
         try:
-            # Give the task a moment to finish its current work
             await asyncio.wait_for(agent_task, timeout=5.0)
         except asyncio.TimeoutError:
             logging.warning("Agent task did not finish in time, cancelling.")
@@ -51,40 +40,53 @@ async def on_shutdown():
     logging.info("Shutdown complete.")
 
 
-# --- Background Agent Task ---
+# --- Background Agent Task (Unchanged) ---
 async def agent_loop():
-    """The agent's main loop, now aware of the shutdown signal."""
-    # 6. The loop now checks the shutdown event on each iteration
     while not shutdown_event.is_set():
         try:
-            # This is a placeholder for your agent's actual work cycle.
-            # In a real scenario, this would involve waiting on a queue.
-            # We add a small sleep to prevent this loop from pegging the CPU.
             await asyncio.sleep(0.1)
         except asyncio.CancelledError:
-            # This allows the task to exit cleanly if it's cancelled
             logging.info("Agent loop cancelled.")
             break
     logging.info("Agent loop has stopped.")
 
 
-# --- WebSocket Endpoint (Unchanged) ---
+# --- WebSocket Endpoint (Updated) ---
 @app.websocket("/ws")
 async def websocket_endpoint(client_ws: WebSocket):
     await client_ws.accept()
     logging.info("Client connected.")
+
+    # CHANGE 1: Initialize conversation state for the duration of this connection
+    conversation_state = {"messages": []}
+
     try:
         async for stt_message_str in transcript_generator(client_ws):
-            # ... (rest of your WebSocket logic remains the same)
             try:
                 stt_response = json.loads(stt_message_str)
                 transcript = stt_response.get("data", "").strip()
-                if not transcript: continue
+                if not transcript:
+                    continue
 
                 await client_ws.send_text(stt_message_str)
-                initial_state = {"transcribed_text": transcript}
-                final_state = await reasoning_engine.ainvoke(initial_state)
-                llm_response = final_state.get("llm_response", "")
+
+                # CHANGE 2: Update the input to include the current conversation state
+                inputs = {
+                    "transcribed_text": transcript,
+                    "messages": conversation_state.get("messages", [])
+                }
+
+                # The engine now receives the history and returns the updated state
+                final_state = await reasoning_engine.ainvoke(inputs)
+
+                # CHANGE 3: Persist the updated state for the next turn
+                conversation_state = final_state
+
+                # CHANGE 4: Extract the response from the last message in the list
+                llm_response = ""
+                if final_state.get("messages") and len(final_state["messages"]) > 0:
+                    last_message = final_state["messages"][-1]
+                    llm_response = last_message.content
 
                 response_payload = {"data": llm_response, "source": "assistant"}
                 await client_ws.send_text(json.dumps(response_payload))
