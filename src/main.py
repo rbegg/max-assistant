@@ -127,11 +127,16 @@ async def websocket_endpoint(client_ws: WebSocket):
     async def client_reader():
         try:
             while True:
-                # For now, we only process binary audio data as per original implementation.
-                # To handle text, the client would need to send it, and we could use
-                # `message = await client_ws.receive()` to inspect message type.
-                audio_chunk = await client_ws.receive_bytes()
-                await binary_input_queue.put(audio_chunk)
+                message = await client_ws.receive()
+                if message.get("type") == "websocket.disconnect":
+                    break
+
+                # The 'text' key will be present for text messages
+                if 'text' in message:
+                    await text_input_queue.put(message['text'])
+                # The 'bytes' key will be present for binary messages
+                elif 'bytes' in message:
+                    await binary_input_queue.put(message['bytes'])
         except WebSocketDisconnect:
             logging.info("Client disconnected (reader).")
         except Exception as e:
