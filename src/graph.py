@@ -1,12 +1,21 @@
+# Copyright (c) 2025, Robert Begg
+# Licensed under the MIT License. See LICENSE for more details.
+"""
+   Implementation of the langgraph state graph for the Max Assistant.
+"""
+
 import os
 from typing import TypedDict, Annotated
 import operator
 import asyncio
+import datetime
 
 from langchain_community.chat_models import ChatOllama
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import BaseMessage, HumanMessage
 from langgraph.graph import StateGraph, END
+
+from .prompts import senior_assistant_prompt
 
 # --- Configuration ---
 # Set the maximum number of messages to retain in the history (user + AI = 2 messages per turn)
@@ -32,20 +41,20 @@ print(f"Ollama Base URL = {ollama_base_url} model = {model_name}")
 
 llm = ChatOllama(base_url=ollama_base_url, model=model_name, temperature=0)
 
-# The prompt now includes a placeholder for the message history.
-prompt = ChatPromptTemplate.from_messages([
-    (
-        "system",
-        "You are a helpful assistant for a senior adult. "
-        "Keep your answers short and concise with a goal to engage in a short conversation. "
-        "Be aware of the entire conversation history."
-    ),
-    MessagesPlaceholder(variable_name="messages"),
-    # The user's new message is passed directly into the chain invocation
-    ("user", "{input}"),
-])
-chain = prompt | llm
 
+chain = senior_assistant_prompt | llm
+
+user_name = "Robert"
+location = "Guelph, Ontario, Canada"
+schedule_summary = """
+Breakfast: 8:30am
+Exercise: 10:00am
+Mid-day Medication: 12:00pm 
+Lunch: 12:30pm
+Dinner: 5:30pm
+Bingo: 7:00pm
+Evening Medication: 9:00pm
+"""
 
 # --- Define Graph Nodes ---
 async def invoke_llm(state: GraphState):
@@ -54,8 +63,14 @@ async def invoke_llm(state: GraphState):
     """
     print(f"Reasoning engine received: {state['transcribed_text']}")
 
+    current_time = datetime.datetime.now().strftime("%A, %B %d, %Y, %I:%M:%S %p")
+
     # Invoke the LLM with the (potentially pruned) message history and the new user input
     response = await chain.ainvoke({
+        "user_name": user_name,
+        "location": location,
+        "current_time": current_time,
+        "schedule_summary": schedule_summary,
         "messages": state["messages"],
         "input": state["transcribed_text"]
     })
