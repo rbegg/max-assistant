@@ -1,7 +1,7 @@
 fastapi
 uvicorn[standard]
 langgraph
-langchain-community
+langchain-ollama
 langchain-core
 pydantic
 python-dotenv

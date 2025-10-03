@@ -28,7 +28,7 @@ import logging
 import json
 from contextlib import asynccontextmanager  # 1. Import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from asyncio import Queue
+from asyncio import Queue, Task
 
 from .graph import create_reasoning_engine
 from .stt_service import transcript_generator
@@ -53,6 +53,11 @@ conversation_state: GraphState = {
     "transcribed_text": "",
     "voice": TTS_VOICE }
 
+# --- Global Task and Engine Placeholders ---
+# This will hold the task that initializes the engine
+reasoning_engine_task: Task | None = None
+# This will hold the compiled engine once the task is complete
+reasoning_engine = None
 
 # 2. Create the new lifespan context manager to replace on_event
 @asynccontextmanager
@@ -60,6 +65,13 @@ async def lifespan(app: FastAPI):
     """
     Manages the application's startup and shutdown logic, handling background tasks.
     """
+    global reasoning_engine_task
+    logging.info("Application startup...")
+
+    # Schedule the reasoning engine creation to run in the background
+    logging.info("Scheduling reasoning engine initialization...")
+    reasoning_engine_task = asyncio.create_task(create_reasoning_engine())
+
     logging.info("Launching agent and text handler background tasks...")
     # Startup logic: create background tasks
     agent_task = asyncio.create_task(agent_loop())
@@ -72,7 +84,8 @@ async def lifespan(app: FastAPI):
     logging.info("Shutdown event received. Signaling tasks to stop.")
     shutdown_event.set()
 
-    tasks_to_await = [task for task in (agent_task, text_handler_task) if task]
+    tasks_to_await = [task for task in (agent_task, text_handler_task, reasoning_engine_task) if
+                      task and not task.done()]
     if tasks_to_await:
         try:
             await asyncio.wait_for(asyncio.gather(*tasks_to_await), timeout=SHUTDOWN_TIMEOUT)
@@ -117,7 +130,17 @@ async def text_input_handler_loop():
 
 # --- Background Agent Task ---
 async def agent_loop():
-    global conversation_state
+    global conversation_state, reasoning_engine
+
+    # Ensure the reasoning engine is ready before processing any transcripts.
+    # This will wait for the background task to complete if it hasn't already.
+    if reasoning_engine_task and not reasoning_engine:
+        logging.info("Agent loop waiting for reasoning engine to initialize...")
+        reasoning_engine = await reasoning_engine_task
+        if not reasoning_engine:
+            logging.error("Reasoning engine failed to initialize. Agent loop cannot proceed.")
+            return
+        logging.info("Reasoning engine is ready. Agent loop is active.")
 
     # The transcript_generator now reads from our decoupled queue
     async for stt_message_str in transcript_generator(binary_input_queue):
@@ -139,6 +162,7 @@ async def agent_loop():
                 "username": conversation_state.get("username", DEFAULT_USERNAME),
                 "voice": conversation_state.get("voice", TTS_VOICE)
             }
+            logging.info(f"Calling Reasoning engine with:  {inputs}")
             final_state = await reasoning_engine.ainvoke(inputs)
             conversation_state = final_state
 
@@ -218,7 +242,7 @@ async def websocket_endpoint(client_ws: WebSocket):
 
 
 # --- Reasoning Engine ---
-reasoning_engine = create_reasoning_engine()
+# reasoning_engine = create_reasoning_engine()
 
 if __name__ == "__main__":
     uvicorn.run(app, host=HOST, port=PORT)

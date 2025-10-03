@@ -14,20 +14,17 @@ chat applications or AI-powered assistants.
 """
 
 import os
-from typing import Annotated
-import operator
 import asyncio
 import datetime
 import logging
 
-from langchain_community.chat_models import ChatOllama
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import BaseMessage, HumanMessage
 from langgraph.graph import StateGraph, END
 
 from .prompts import senior_assistant_prompt
 from .state import GraphState
 from .config import MESSAGE_PRUNING_LIMIT
+from .ollama_preloader import warm_up_ollama_async
 
 # --- LLM and Prompt Initialization ---
 model_name = os.getenv("OLLAMA_MODEL_NAME", "llama3")
@@ -35,9 +32,8 @@ ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 
 logging.info(f"Ollama Base URL = {ollama_base_url} model = {model_name}")
 
-llm = ChatOllama(base_url=ollama_base_url, model=model_name, temperature=0)
-
-chain = senior_assistant_prompt | llm
+# This global variable will hold the llm chain after async initialization
+llm_chain = None
 
 location = "Guelph, Ontario, Canada"
 schedule_summary = """
@@ -55,6 +51,12 @@ async def invoke_llm(state: GraphState):
     """
     Node to get a response from the LLM based on the conversation history.
     """
+    global llm_chain
+    if not llm_chain:
+        logging.error("LLM chain not initialized!")
+        # Return an empty message or handle the error appropriately
+        return {"messages": [HumanMessage(content=state["transcribed_text"])]}
+
     logging.info(f"Reasoning engine received: {state['transcribed_text']}")
     logging.info(f"Current message count: {len(state['messages'])}")
     logging.info(f"Username: {state['username']}")
@@ -62,7 +64,7 @@ async def invoke_llm(state: GraphState):
     current_time = datetime.datetime.now().strftime("%A, %B %d, %Y, %I:%M:%S %p")
 
     # Invoke the LLM with the (potentially pruned) message history and the new user input
-    response = await chain.ainvoke({
+    response = await llm_chain.ainvoke({
         "user_name": state["username"],
         "location": location,
         "current_time": current_time,
@@ -92,8 +94,18 @@ def prune_messages(state: GraphState):
 
 
 # --- Build the Graph ---
-def create_reasoning_engine():
+async def create_reasoning_engine():
     """Builds the graph with a pruning step before the LLM call."""
+    global llm_chain
+
+    # Asynchronously warm up the LLM
+    llm = await warm_up_ollama_async(model_name, ollama_base_url, temperature=0)
+
+    if not llm:
+        raise RuntimeError("Failed to initialize the LLM.")
+
+    # Create the chain with the initialized LLM
+    llm_chain = senior_assistant_prompt | llm
     workflow = StateGraph(GraphState)
 
     # Add the nodes
