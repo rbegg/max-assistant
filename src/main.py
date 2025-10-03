@@ -1,3 +1,33 @@
+# Copyright (c) 2025, Robert Begg
+# Licensed under the MIT License. See LICENSE for more details.
+"""
+Provides a WebSocket-based API for handling client interactions with a conversational AI agent, including speech-to-text,
+text-based reasoning, and synthesized speech output.
+
+This module integrates various components such as STT, TTS, and reasoning through queues to decouple WebSocket
+communications from processing logic. It includes the lifecycle management of background tasks and handles graceful
+shutdowns for better resource management.
+
+Attributes:
+    app (FastAPI): The main FastAPI application instance.
+    binary_input_queue (asyncio.Queue): Queue for handling binary input data, primarily for audio data.
+    text_input_queue (asyncio.Queue): Queue for handling incoming text messages.
+    client_output_queue (asyncio.Queue): Queue for sending messages to the WebSocket client.
+    shutdown_event (asyncio.Event): Event signaling tasks to stop during shutdown.
+    agent_task (Optional[asyncio.Task]): Background task for reasoning engine and conversation state logic.
+    text_handler_task (Optional[asyncio.Task]): Background task for handling text input.
+    conversation_state (GraphState): Shared state of the conversation including transcribed text, username, and messages.
+    reasoning_engine: The reasoning engine, which processes the state and provides responses to client queries.
+
+Functions:
+    on_startup(): Launches background tasks for the agent and text handler when the application starts.
+    on_shutdown(): Handles shutdown logic, ensuring all tasks are stopped gracefully.
+    text_input_handler_loop(): Processes text input data from the client, and updates conversation state.
+    agent_loop(): Main conversational loop handling STT output, reasoning engine invocation, TTS generation,
+                  and client output responses.
+    websocket_endpoint(client_ws): Handles WebSocket connections, bridging client communications with internal queues.
+"""
+
 import uvicorn
 import asyncio
 import logging
@@ -8,6 +38,7 @@ from asyncio import Queue
 from .graph import create_reasoning_engine
 from .stt_service import transcript_generator
 from .tts_service import synthesize_speech
+from .state import GraphState
 
 # --- Configuration ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -23,6 +54,7 @@ client_output_queue = Queue()
 shutdown_event = asyncio.Event()
 agent_task = None
 text_handler_task = None
+conversation_state: GraphState = {"messages": [], "username": "User", "transcribed_text": ""}
 
 
 @app.on_event("startup")
@@ -38,7 +70,7 @@ async def on_shutdown():
     global agent_task, text_handler_task
     logging.info("Shutdown event received. Signaling agent to stop.")
     shutdown_event.set()
-    
+
     tasks_to_await = [task for task in (agent_task, text_handler_task) if task]
     if tasks_to_await:
         try:
@@ -59,6 +91,9 @@ async def text_input_handler_loop():
             # Use a timeout to allow the loop to check for the shutdown event
             text_data = await asyncio.wait_for(text_input_queue.get(), timeout=1.0)
             logging.info(f"TEXT_HANDLER: Received text from client: {text_data}")
+            client_dict = json.loads(text_data)
+            if "username" in client_dict:
+                conversation_state["username"] = client_dict.get("username", conversation_state["username"])
             # This is a placeholder for future text-based command handling
         except asyncio.TimeoutError:
             continue
@@ -70,7 +105,7 @@ async def text_input_handler_loop():
 
 # --- Background Agent Task (Refactored) ---
 async def agent_loop():
-    conversation_state = {"messages": []}
+    global conversation_state
 
     # The transcript_generator now reads from our decoupled queue
     async for stt_message_str in transcript_generator(binary_input_queue):
@@ -86,9 +121,10 @@ async def agent_loop():
             await client_output_queue.put(stt_message_str)
 
             # 2. Send transcribed text to the reasoning engine
-            inputs = {
+            inputs: GraphState = {
                 "transcribed_text": transcript,
-                "messages": conversation_state.get("messages", [])
+                "messages": conversation_state.get("messages", []),
+                "username": conversation_state.get("username", "User")
             }
             final_state = await reasoning_engine.ainvoke(inputs)
             conversation_state = final_state

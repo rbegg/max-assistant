@@ -1,14 +1,24 @@
 # Copyright (c) 2025, Robert Begg
 # Licensed under the MIT License. See LICENSE for more details.
 """
-   Implementation of the langgraph state graph for the Max Assistant.
+This module defines a framework for managing conversation history and invoking a large language model (LLM)
+to generate responses. It includes mechanisms for pruning conversation history to ensure efficient interaction
+with the LLM, as well as a configurable reasoning engine implemented as a state graph.
+
+The module initializes an LLM using the ChatOllama model, constructs conversation nodes for pruning messages
+and generating AI responses, and builds an execution graph workflow for multi-node communication.
+The reasoning engine incorporates both stateful and asynchronous operations to handle conversational data.
+
+Classes and functions are structured to allow seamless integration of the reasoning engine into
+chat applications or AI-powered assistants.
 """
 
 import os
-from typing import TypedDict, Annotated
+from typing import Annotated
 import operator
 import asyncio
 import datetime
+import logging
 
 from langchain_community.chat_models import ChatOllama
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
@@ -16,6 +26,7 @@ from langchain_core.messages import BaseMessage, HumanMessage
 from langgraph.graph import StateGraph, END
 
 from .prompts import senior_assistant_prompt
+from .state import GraphState
 
 # --- Configuration ---
 # Set the maximum number of messages to retain in the history (user + AI = 2 messages per turn)
@@ -23,37 +34,25 @@ from .prompts import senior_assistant_prompt
 MESSAGE_PRUNING_LIMIT = 10
 
 
-# --- Define State ---
-# The state is updated to manage a list of messages for conversation history.
-# 'operator.add' ensures that new messages are appended to the existing list.
-class GraphState(TypedDict):
-    # The user's transcribed text for the current turn
-    transcribed_text: str
-    # The full conversation history, which will be pruned
-    messages: Annotated[list[BaseMessage], operator.add]
-
-
 # --- LLM and Prompt Initialization ---
 model_name = os.getenv("OLLAMA_MODEL_NAME", "llama3")
 ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 
-print(f"Ollama Base URL = {ollama_base_url} model = {model_name}")
+logging.info(f"Ollama Base URL = {ollama_base_url} model = {model_name}")
 
 llm = ChatOllama(base_url=ollama_base_url, model=model_name, temperature=0)
 
-
 chain = senior_assistant_prompt | llm
 
-user_name = "Robert"
 location = "Guelph, Ontario, Canada"
 schedule_summary = """
 Breakfast: 8:30am
-Exercise: 10:00am
-Mid-day Medication: 12:00pm 
+Exercise: 10 am
+Mid-day Medication: 12 pm 
 Lunch: 12:30pm
 Dinner: 5:30pm
-Bingo: 7:00pm
-Evening Medication: 9:00pm
+Bingo: 7 pm
+Evening Medication: 9 pm
 """
 
 # --- Define Graph Nodes ---
@@ -61,13 +60,15 @@ async def invoke_llm(state: GraphState):
     """
     Node to get a response from the LLM based on the conversation history.
     """
-    print(f"Reasoning engine received: {state['transcribed_text']}")
+    logging.info(f"Reasoning engine received: {state['transcribed_text']}")
+    logging.info(f"Current message count: {len(state['messages'])}")
+    logging.info(f"Username: {state['username']}")
 
     current_time = datetime.datetime.now().strftime("%A, %B %d, %Y, %I:%M:%S %p")
 
     # Invoke the LLM with the (potentially pruned) message history and the new user input
     response = await chain.ainvoke({
-        "user_name": user_name,
+        "user_name": state["username"],
         "location": location,
         "current_time": current_time,
         "schedule_summary": schedule_summary,
@@ -75,7 +76,7 @@ async def invoke_llm(state: GraphState):
         "input": state["transcribed_text"]
     })
 
-    print(f"Reasoning engine produced: {response.content}")
+    logging.info(f"Reasoning engine produced: {response.content}")
 
     # The node returns the new user message and the AI's response to be added to the state
     return {"messages": [HumanMessage(content=state["transcribed_text"]), response]}
@@ -87,7 +88,7 @@ def prune_messages(state: GraphState):
     """
     messages = state["messages"]
     if len(messages) > MESSAGE_PRUNING_LIMIT:
-        print(f"--- Pruning messages from {len(messages)} down to {MESSAGE_PRUNING_LIMIT} ---")
+        logging.info(f"--- Pruning messages from {len(messages)} down to {MESSAGE_PRUNING_LIMIT} ---")
         # This overwrites the 'messages' key in the state with the pruned list
         return {"messages": messages[-MESSAGE_PRUNING_LIMIT:]}
 
