@@ -2,11 +2,11 @@ import wave
 from io import BytesIO
 import logging
 from wyoming.client import AsyncClient
-from wyoming.tts import Synthesize
+from wyoming.tts import Synthesize, SynthesizeVoice
 from wyoming.audio import AudioStart, AudioChunk, AudioStop
 from wyoming.event import Event
 
-async def synthesize_speech(text: str ) -> bytes:
+async def synthesize_speech(text: str , voice: str) -> bytes:
     """
     Connects to a Wyoming TTS service using the wyoming library,
     sends text for synthesis, and saves the received audio to a WAV file.
@@ -18,9 +18,12 @@ async def synthesize_speech(text: str ) -> bytes:
             logging.info("Connection to tts established.")
 
             # 1. Send synthesize request
-            synthesize_event = Synthesize(text=text)
+            synthesize_event = Synthesize(
+                text=text,
+                voice=SynthesizeVoice(name=voice)
+            )
             await client.write_event(synthesize_event.event())
-            logging.info(f"Sent synthesize request for: '{text}'")
+            logging.info(f"Sent synthesize request with voice: {voice} text: '{text}'")
 
             # 2. Prepare in-memory buffer for WAV data
             wav_buffer = BytesIO()

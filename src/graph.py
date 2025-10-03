@@ -27,12 +27,7 @@ from langgraph.graph import StateGraph, END
 
 from .prompts import senior_assistant_prompt
 from .state import GraphState
-
-# --- Configuration ---
-# Set the maximum number of messages to retain in the history (user + AI = 2 messages per turn)
-# A value of 10 retains the last 5 turns of the conversation.
-MESSAGE_PRUNING_LIMIT = 10
-
+from .config import MESSAGE_PRUNING_LIMIT
 
 # --- LLM and Prompt Initialization ---
 model_name = os.getenv("OLLAMA_MODEL_NAME", "llama3")

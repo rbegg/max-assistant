@@ -46,12 +46,12 @@ COPY --chown=appuser:appuser src/ ./src
 # Switch to the non-root user
 USER appuser
 
-ENV LOG_LEVEL="${ASSISTANT_LOG_LEVEL:-info}" \
-    UVICORN_PORT="80" \
-    UVICORN_HOST="0.0.0.0"
+ENV UVICORN_PORT="80" \
+    UVICORN_HOST="0.0.0.0" \
+    LOG_LEVEL=${ASSISTANT_LOG_LEVEL:-info}
 
 # Set the command to run the FastAPI application with Uvicorn
-CMD ["python", "-m", "uvicorn", "src.main:app"]
+CMD ["python", "-m", "uvicorn", "src.main:app", "--log-config", "src/log_config.json"]
 
 # ---- Development Stage ----
 # This stage is for local development with mounted source code

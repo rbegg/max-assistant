@@ -34,9 +34,10 @@ from .graph import create_reasoning_engine
 from .stt_service import transcript_generator
 from .tts_service import synthesize_speech
 from .state import GraphState
+from .config import DEFAULT_USERNAME, TTS_VOICE, PORT, LOG_LEVEL, LOG_FORMAT, SHUTDOWN_TIMEOUT, QUEUE_GET_TIMEOUT
 
 # --- Configuration ---
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=LOG_LEVEL, format=LOG_FORMAT)
 
 # --- Queues for decoupling WebSocket I/O from agent logic ---
 binary_input_queue = Queue()
@@ -46,7 +47,11 @@ client_output_queue = Queue()
 # --- Graceful Shutdown Setup ---
 shutdown_event = asyncio.Event()
 # Global state is still needed for the agent and text handler loops
-conversation_state: GraphState = {"messages": [], "username": "User", "transcribed_text": ""}
+conversation_state: GraphState = {
+    "messages": [],
+    "username": DEFAULT_USERNAME,
+    "transcribed_text": "",
+    "voice": TTS_VOICE }
 
 
 # 2. Create the new lifespan context manager to replace on_event
@@ -70,7 +75,7 @@ async def lifespan(app: FastAPI):
     tasks_to_await = [task for task in (agent_task, text_handler_task) if task]
     if tasks_to_await:
         try:
-            await asyncio.wait_for(asyncio.gather(*tasks_to_await), timeout=5.0)
+            await asyncio.wait_for(asyncio.gather(*tasks_to_await), timeout=SHUTDOWN_TIMEOUT)
         except asyncio.TimeoutError:
             logging.warning("Tasks did not finish in time, cancelling.")
             for task in tasks_to_await:
@@ -94,11 +99,13 @@ async def text_input_handler_loop():
     while not shutdown_event.is_set():
         try:
             # Use a timeout to allow the loop to check for the shutdown event
-            text_data = await asyncio.wait_for(text_input_queue.get(), timeout=1.0)
+            text_data = await asyncio.wait_for(text_input_queue.get(), timeout=QUEUE_GET_TIMEOUT)
             logging.info(f"TEXT_HANDLER: Received text from client: {text_data}")
             client_dict = json.loads(text_data)
             if "username" in client_dict:
                 conversation_state["username"] = client_dict.get("username", conversation_state["username"])
+            if "voice" in client_dict:
+                conversation_state["voice"] = client_dict.get("voice", conversation_state["voice"])
             # This is a placeholder for future text-based command handling
         except asyncio.TimeoutError:
             continue
@@ -129,7 +136,8 @@ async def agent_loop():
             inputs: GraphState = {
                 "transcribed_text": transcript,
                 "messages": conversation_state.get("messages", []),
-                "username": conversation_state.get("username", "User")
+                "username": conversation_state.get("username", DEFAULT_USERNAME),
+                "voice": conversation_state.get("voice", TTS_VOICE)
             }
             final_state = await reasoning_engine.ainvoke(inputs)
             conversation_state = final_state
@@ -144,7 +152,7 @@ async def agent_loop():
             await client_output_queue.put(json.dumps(response_payload))
 
             # 4. Send reasoning response to TTS to get audio
-            output_audio = await synthesize_speech(llm_response)
+            output_audio = await synthesize_speech(llm_response, conversation_state.get("voice", TTS_VOICE))
 
             # 5. Send synthesized audio to the client
             await client_output_queue.put(output_audio)
@@ -213,4 +221,4 @@ async def websocket_endpoint(client_ws: WebSocket):
 reasoning_engine = create_reasoning_engine()
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="127.0.0.1", port=9000)
+    uvicorn.run(app, host=HOST, port=PORT)

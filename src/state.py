@@ -20,3 +20,4 @@ class GraphState(TypedDict):
     transcribed_text: str
     username: str
     messages: Annotated[list[BaseMessage], operator.add]
+    voice: str
