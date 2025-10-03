@@ -3,25 +3,19 @@
 """
 Provides a WebSocket-based API for handling client interactions with a conversational AI agent, including speech-to-text,
 text-based reasoning, and synthesized speech output.
-
 This module integrates various components such as STT, TTS, and reasoning through queues to decouple WebSocket
 communications from processing logic. It includes the lifecycle management of background tasks and handles graceful
 shutdowns for better resource management.
-
 Attributes:
     app (FastAPI): The main FastAPI application instance.
     binary_input_queue (asyncio.Queue): Queue for handling binary input data, primarily for audio data.
     text_input_queue (asyncio.Queue): Queue for handling incoming text messages.
     client_output_queue (asyncio.Queue): Queue for sending messages to the WebSocket client.
     shutdown_event (asyncio.Event): Event signaling tasks to stop during shutdown.
-    agent_task (Optional[asyncio.Task]): Background task for reasoning engine and conversation state logic.
-    text_handler_task (Optional[asyncio.Task]): Background task for handling text input.
     conversation_state (GraphState): Shared state of the conversation including transcribed text, username, and messages.
     reasoning_engine: The reasoning engine, which processes the state and provides responses to client queries.
-
 Functions:
-    on_startup(): Launches background tasks for the agent and text handler when the application starts.
-    on_shutdown(): Handles shutdown logic, ensuring all tasks are stopped gracefully.
+    lifespan(app): Manages application startup and shutdown, launching and stopping background tasks.
     text_input_handler_loop(): Processes text input data from the client, and updates conversation state.
     agent_loop(): Main conversational loop handling STT output, reasoning engine invocation, TTS generation,
                   and client output responses.
@@ -32,6 +26,7 @@ import uvicorn
 import asyncio
 import logging
 import json
+from contextlib import asynccontextmanager  # 1. Import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from asyncio import Queue
 
@@ -42,33 +37,34 @@ from .state import GraphState
 
 # --- Configuration ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-app = FastAPI()
 
 # --- Queues for decoupling WebSocket I/O from agent logic ---
 binary_input_queue = Queue()
 text_input_queue = Queue()
 client_output_queue = Queue()
 
-
 # --- Graceful Shutdown Setup ---
 shutdown_event = asyncio.Event()
-agent_task = None
-text_handler_task = None
+# Global state is still needed for the agent and text handler loops
 conversation_state: GraphState = {"messages": [], "username": "User", "transcribed_text": ""}
 
 
-@app.on_event("startup")
-async def on_startup():
-    global agent_task, text_handler_task
+# 2. Create the new lifespan context manager to replace on_event
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Manages the application's startup and shutdown logic, handling background tasks.
+    """
     logging.info("Launching agent and text handler background tasks...")
+    # Startup logic: create background tasks
     agent_task = asyncio.create_task(agent_loop())
     text_handler_task = asyncio.create_task(text_input_handler_loop())
 
+    # The 'yield' pauses the function; the application runs while it's paused.
+    yield
 
-@app.on_event("shutdown")
-async def on_shutdown():
-    global agent_task, text_handler_task
-    logging.info("Shutdown event received. Signaling agent to stop.")
+    # Shutdown logic: runs after the application is shutting down
+    logging.info("Shutdown event received. Signaling tasks to stop.")
     shutdown_event.set()
 
     tasks_to_await = [task for task in (agent_task, text_handler_task) if task]
@@ -82,6 +78,15 @@ async def on_shutdown():
         except asyncio.CancelledError:
             logging.info("Tasks were cancelled during shutdown.")
     logging.info("Shutdown complete.")
+
+
+# 3. Instantiate FastAPI with the lifespan manager
+app = FastAPI(lifespan=lifespan)
+
+# NOTE: The global variables 'agent_task' and 'text_handler_task' are removed.
+# Their scope is now contained entirely within the 'lifespan' function.
+
+# 4. DELETED the deprecated @app.on_event("startup") and @app.on_event("shutdown") functions
 
 
 # --- Text Input Handler ---
@@ -103,7 +108,7 @@ async def text_input_handler_loop():
     logging.info("Text input handler loop has stopped.")
 
 
-# --- Background Agent Task (Refactored) ---
+# --- Background Agent Task ---
 async def agent_loop():
     global conversation_state
 
@@ -153,7 +158,7 @@ async def agent_loop():
     logging.info("Agent loop has stopped.")
 
 
-# --- WebSocket Endpoint (Refactored) ---
+# --- WebSocket Endpoint ---
 @app.websocket("/ws")
 async def websocket_endpoint(client_ws: WebSocket):
     await client_ws.accept()
@@ -167,10 +172,8 @@ async def websocket_endpoint(client_ws: WebSocket):
                 if message.get("type") == "websocket.disconnect":
                     break
 
-                # The 'text' key will be present for text messages
                 if 'text' in message:
                     await text_input_queue.put(message['text'])
-                # The 'bytes' key will be present for binary messages
                 elif 'bytes' in message:
                     await binary_input_queue.put(message['bytes'])
         except WebSocketDisconnect:
@@ -206,7 +209,7 @@ async def websocket_endpoint(client_ws: WebSocket):
         logging.info("Client connection handler finished.")
 
 
-# --- Reasoning Engine (Unchanged) ---
+# --- Reasoning Engine ---
 reasoning_engine = create_reasoning_engine()
 
 if __name__ == "__main__":
