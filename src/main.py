@@ -11,8 +11,10 @@ from .graph import create_reasoning_engine
 logging.basicConfig(level=LOG_LEVEL, format=LOG_FORMAT)
 
 
-# This will hold the compiled reasoning engine.
+# Compiled reasoning engine.
 reasoning_engine = None
+
+
 
 
 @asynccontextmanager
@@ -35,6 +37,13 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+@app.get("/health")
+def health_check():
+    """
+    Checks if the application is healthy.
+    """
+    return {"status": "healthy"}
 
 
 @app.websocket("/ws")

@@ -6,6 +6,9 @@ ARG PYTHON_VERSION=3.11
 ENV PYTHONDONTWRITEBYTECODE 1
 ENV PYTHONUNBUFFERED 1
 
+# Install dependencies````
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+
 # Set the working directory inside the container.
 WORKDIR /app
 
