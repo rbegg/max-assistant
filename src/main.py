@@ -13,6 +13,7 @@ logging.basicConfig(level=LOG_LEVEL, format=LOG_FORMAT)
 
 # Compiled reasoning engine.
 reasoning_engine = None
+reasoning_engine_preload_task = None
 
 
 
@@ -22,14 +23,11 @@ async def lifespan(app: FastAPI):
     """
     Manages the application's startup logic.
     """
-    global reasoning_engine
+    global reasoning_engine_preload_task
     logging.info("Application startup...")
 
     logging.info("Initializing the reasoning engine...")
-    reasoning_engine = await create_reasoning_engine()
-    if not reasoning_engine:
-        raise RuntimeError("Failed to initialize the reasoning engine.")
-    logging.info("Reasoning engine is ready.")
+    reasoning_engine_preload_task = asyncio.create_task(create_reasoning_engine())
 
     yield
 
@@ -51,10 +49,15 @@ async def websocket_endpoint(client_ws: WebSocket):
     await client_ws.accept()
     logging.info("Client connected.")
 
+    global reasoning_engine
     if not reasoning_engine:
-        logging.error("Reasoning engine not available.")
-        await client_ws.close(code=1011, reason="Server error: Reasoning engine not initialized.")
-        return
+        logging.info("Waiting for reasoning engine to be ready...")
+        reasoning_engine = await reasoning_engine_preload_task
+        if not reasoning_engine:
+            logging.error("Reasoning engine not available.")
+            await client_ws.close(code=1011, reason="Server error: Reasoning engine not initialized.")
+            return
+        logging.info("Reasoning engine is ready.")
 
     manager = ConnectionManager(reasoning_engine, client_ws)
     try:
