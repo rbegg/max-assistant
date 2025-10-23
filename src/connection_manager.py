@@ -162,6 +162,7 @@ class ConnectionManager:
 
                     output_audio = await synthesize_speech(llm_response,
                                                            self.conversation_state.get("voice", TTS_VOICE))
+                    logging.info("Sending audio Response.")
                     await self.client_output_queue.put(output_audio)
 
                 except (json.JSONDecodeError, AttributeError) as e:
