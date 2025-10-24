@@ -20,10 +20,10 @@ from asyncio import Queue
 
 from fastapi import WebSocket, WebSocketDisconnect
 
-from .agent import Agent
-from .config import QUEUE_GET_TIMEOUT
-from .stt_service import transcript_generator
-from .tts_service import synthesize_speech
+from src.agent.agent import Agent
+from src.config import QUEUE_GET_TIMEOUT
+from src.api.stt_service import transcript_generator
+from src.api.tts_service import synthesize_speech
 
 
 class ConnectionManager:

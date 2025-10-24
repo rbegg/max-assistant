@@ -19,5 +19,6 @@ class GraphState(TypedDict):
     """
     transcribed_text: str
     username: str
+    thread_id: str
     messages: Annotated[list[BaseMessage], operator.add]
     voice: str

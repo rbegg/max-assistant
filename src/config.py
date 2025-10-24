@@ -32,6 +32,11 @@ DEFAULT_USERNAME = os.getenv("DEFAULT_USERNAME", "User")
 SHUTDOWN_TIMEOUT = float(os.getenv("SHUTDOWN_TIMEOUT", "5.0"))
 QUEUE_GET_TIMEOUT = float(os.getenv("QUEUE_GET_TIMEOUT", "1.0"))
 
+# --- Neo4j Configuration ---
+NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
+NEO4J_USERNAME = os.getenv("NEO4J_USERNAME", "neo4j")
+NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "password")
+
 # Validate MESSAGE_PRUNING_LIMIT
 limit_str = (os.getenv("MESSAGE_PRUNING_LIMIT", 10))
 MESSAGE_PRUNING_LIMIT = int(limit_str)

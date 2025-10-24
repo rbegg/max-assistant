@@ -9,3 +9,4 @@ ollama
 httpx
 websockets
 wyoming
+neo4j

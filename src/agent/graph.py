@@ -14,17 +14,16 @@ chat applications or AI-powered assistants.
 """
 
 import os
-import asyncio
-import datetime
 import logging
 
-from langchain_core.messages import BaseMessage, HumanMessage
+from langchain_core.messages import HumanMessage
 from langgraph.graph import StateGraph, END
 
-from .prompts import senior_assistant_prompt
-from .state import GraphState
-from .config import MESSAGE_PRUNING_LIMIT
-from .ollama_preloader import warm_up_ollama_async
+from src.agent.prompts import senior_assistant_prompt
+from src.agent.state import GraphState
+from src.config import MESSAGE_PRUNING_LIMIT
+from src.api.ollama_preloader import warm_up_ollama_async
+from src.context.protocol import get_dynamic_context
 
 # --- LLM and Prompt Initialization ---
 model_name = os.getenv("OLLAMA_MODEL_NAME", "llama3")
@@ -61,14 +60,12 @@ async def invoke_llm(state: GraphState):
     logging.info(f"Current message count: {len(state['messages'])}")
     logging.info(f"Username: {state['username']}")
 
-    current_time = datetime.datetime.now().strftime("%A, %B %d, %Y, %I:%M:%S %p")
+    # Gather context using the Model Context Protocol
+    dynamic_context = await get_dynamic_context(state["username"])
 
     # Invoke the LLM with the (potentially pruned) message history and the new user input
     response = await llm_chain.ainvoke({
-        "user_name": state["username"],
-        "location": location,
-        "current_time": current_time,
-        "schedule_summary": schedule_summary,
+        **dynamic_context,
         "messages": state["messages"],
         "input": state["transcribed_text"]
     })

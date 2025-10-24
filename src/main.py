@@ -4,8 +4,9 @@ import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket
 from .config import PORT, LOG_LEVEL, LOG_FORMAT, HOST
-from .connection_manager import ConnectionManager
-from .graph import create_reasoning_engine
+from src.api.connection_manager import ConnectionManager
+from src.agent.graph import create_reasoning_engine
+from src.tools.neo4j import neo4j_client
 
 # --- Configuration ---
 logging.basicConfig(level=LOG_LEVEL, format=LOG_FORMAT)
@@ -31,6 +32,8 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    logging.info("Closing Neo4j client connection...")
+    await neo4j_client.close()
     logging.info("Application shutdown.")
 
 

@@ -78,4 +78,4 @@ ENV LOG_LEVEL="${ASSISTANT_LOG_LEVEL:-info}" \
 # Keep the container running to allow for IDE attachment and interactive use
 #CMD ["sleep", "infinity"]
 # Run the container in reload mode for live coding
-CMD ["python", "-m", "uvicorn", "src.main:app", "--reload"]
+CMD ["python", "-m", "uvicorn", "src.main:app", "--reload-dir", "/app/src", "--reload-exclude", "*__pycache__*"]
