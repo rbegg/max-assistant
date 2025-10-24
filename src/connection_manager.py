@@ -20,8 +20,8 @@ from asyncio import Queue
 
 from fastapi import WebSocket, WebSocketDisconnect
 
-from .config import DEFAULT_USERNAME, QUEUE_GET_TIMEOUT, TTS_VOICE
-from .state import GraphState
+from .agent import Agent
+from .config import QUEUE_GET_TIMEOUT
 from .stt_service import transcript_generator
 from .tts_service import synthesize_speech
 
@@ -31,18 +31,11 @@ class ConnectionManager:
 
     def __init__(self, reasoning_engine, websocket: WebSocket):
         self.ws = websocket
-        self.reasoning_engine = reasoning_engine
+        self.agent = Agent(reasoning_engine)
         # Each connection gets its own set of queues
         self.binary_input_queue = Queue()
         self.text_input_queue = Queue()
         self.client_output_queue = Queue()
-        # Each connection gets its own state
-        self.conversation_state: GraphState = {
-            "messages": [],
-            "username": DEFAULT_USERNAME,
-            "transcribed_text": "",
-            "voice": TTS_VOICE
-        }
         self._shutdown_event = asyncio.Event()
 
     async def handle_connection(self):
@@ -116,10 +109,9 @@ class ConnectionManager:
                 logging.info(f"TEXT_HANDLER: Received text from client: {text_data}")
                 client_dict = json.loads(text_data)
                 if "username" in client_dict:
-                    self.conversation_state["username"] = client_dict.get("username",
-                                                                           self.conversation_state["username"])
+                    self.agent.set_username(client_dict["username"])
                 if "voice" in client_dict:
-                    self.conversation_state["voice"] = client_dict.get("voice", self.conversation_state["voice"])
+                    self.agent.set_voice(client_dict["voice"])
             except asyncio.TimeoutError:
                 continue
             except asyncio.CancelledError:
@@ -142,26 +134,13 @@ class ConnectionManager:
 
                     await self.client_output_queue.put(stt_message_str)
 
-                    inputs: GraphState = {
-                        "transcribed_text": transcript,
-                        "messages": self.conversation_state.get("messages", []),
-                        "username": self.conversation_state.get("username", DEFAULT_USERNAME),
-                        "voice": self.conversation_state.get("voice", TTS_VOICE)
-                    }
-                    logging.info(f"Calling Reasoning engine with: {transcript}")
-                    final_state = await self.reasoning_engine.ainvoke(inputs)
-                    self.conversation_state = final_state
-
-                    llm_response = ""
-                    if final_state.get("messages") and len(final_state["messages"]) > 0:
-                        last_message = final_state["messages"][-1]
-                        llm_response = last_message.content
+                    llm_response = await self.agent.ainvoke(transcript)
 
                     response_payload = {"data": llm_response, "source": "assistant"}
                     await self.client_output_queue.put(json.dumps(response_payload))
 
                     output_audio = await synthesize_speech(llm_response,
-                                                           self.conversation_state.get("voice", TTS_VOICE))
+                                                           self.agent.get_voice())
                     logging.info("Sending audio Response.")
                     await self.client_output_queue.put(output_audio)
 
