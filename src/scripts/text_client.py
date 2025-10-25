@@ -9,13 +9,6 @@ import datetime
 import argparse
 import os
 
-# Load environment variables for text client env
-from dotenv import load_dotenv
-
-if not load_dotenv('../.env.local'):
-    print("Failed to load environment variables.")
-    exit(1)
-
 from src.agent.agent import Agent
 from src.agent.graph import create_reasoning_engine
 

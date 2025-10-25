@@ -32,10 +32,6 @@ DEFAULT_USERNAME = os.getenv("DEFAULT_USERNAME", "User")
 SHUTDOWN_TIMEOUT = float(os.getenv("SHUTDOWN_TIMEOUT", "5.0"))
 QUEUE_GET_TIMEOUT = float(os.getenv("QUEUE_GET_TIMEOUT", "1.0"))
 
-# --- LLM and Prompt Initialization ---
-OLLAMA_MODEL_NAME = os.getenv("OLLAMA_MODEL_NAME", "llama3")
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-
 # --- Neo4j Configuration ---
 NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
 NEO4J_USERNAME = os.getenv("NEO4J_USERNAME", "neo4j")
@@ -47,6 +43,3 @@ MESSAGE_PRUNING_LIMIT = int(limit_str)
 if not isinstance(MESSAGE_PRUNING_LIMIT, int):
     MESSAGE_PRUNING_LIMIT = 10
     logging.warning(f"Invalid Message Pruning Limit '{limit_str}'. Defaulting to {MESSAGE_PRUNING_LIMIT}")
-
-# --- STT ---
-STT_WEBSOCKET_URL = os.environ.get("STT_WEBSOCKET_URL", "ws://stt/ws")
