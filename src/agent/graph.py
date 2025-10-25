@@ -13,23 +13,18 @@ Classes and functions are structured to allow seamless integration of the reason
 chat applications or AI-powered assistants.
 """
 
-import os
 import logging
 
 from langchain_core.messages import HumanMessage
 from langgraph.graph import StateGraph, END
 
+from src.config import OLLAMA_MODEL_NAME, OLLAMA_BASE_URL, MESSAGE_PRUNING_LIMIT
 from src.agent.prompts import senior_assistant_prompt
 from src.agent.state import GraphState
-from src.config import MESSAGE_PRUNING_LIMIT
 from src.api.ollama_preloader import warm_up_ollama_async
 from src.context.protocol import get_dynamic_context
 
-# --- LLM and Prompt Initialization ---
-model_name = os.getenv("OLLAMA_MODEL_NAME", "llama3")
-ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-
-logging.info(f"Ollama Base URL = {ollama_base_url} model = {model_name}")
+logging.info(f"Ollama Base URL = {OLLAMA_BASE_URL} model = {OLLAMA_MODEL_NAME}")
 
 # This global variable will hold the llm chain after async initialization
 llm_chain = None
@@ -96,7 +91,7 @@ async def create_reasoning_engine():
     global llm_chain
 
     # Asynchronously warm up the LLM
-    llm = await warm_up_ollama_async(model_name, ollama_base_url, temperature=0)
+    llm = await warm_up_ollama_async(OLLAMA_MODEL_NAME, OLLAMA_BASE_URL, temperature=0)
 
     if not llm:
         raise RuntimeError("Failed to initialize the LLM.")

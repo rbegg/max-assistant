@@ -1,10 +1,9 @@
 import asyncio
 import logging
-import os
 from websockets.client import connect as websocket_connect
 from websockets.exceptions import ConnectionClosed
+from src.config import STT_WEBSOCKET_URL
 
-STT_WEBSOCKET_URL = os.environ.get("STT_WEBSOCKET_URL", "ws://stt/ws")
 
 
 async def _forward_audio(audio_queue: asyncio.Queue, stt_ws):
