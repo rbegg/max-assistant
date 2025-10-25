@@ -17,8 +17,6 @@ reasoning_engine = None
 reasoning_engine_preload_task = None
 
 
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
