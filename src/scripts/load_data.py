@@ -6,7 +6,7 @@ This script loads initial data into the Neo4j database.
 import asyncio
 import logging
 from neo4j import AsyncGraphDatabase
-from config import NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD
+from src.config import NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
