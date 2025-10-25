@@ -143,6 +143,9 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+.env.*
+!.env.template
+
 
 # Spyder project settings
 .spyderproject
@@ -208,4 +211,3 @@ __marimo__/
 
 .idea
 logs/
-.env*
