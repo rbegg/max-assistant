@@ -9,6 +9,8 @@ import datetime
 import argparse
 import os
 
+
+
 # Load environment variables for text client env
 from dotenv import load_dotenv
 
@@ -16,10 +18,11 @@ if not load_dotenv('../.env.local'):
     print("Failed to load environment variables.")
     exit(1)
 
+from src.config import LOG_LEVEL
 from src.agent.agent import Agent
 from src.agent.graph import create_reasoning_engine
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
 
 
 async def main(log_path=None):
@@ -36,7 +39,7 @@ async def main(log_path=None):
         # Reconfigure logging to use the specified file
         for handler in logging.root.handlers[:]:
             logging.root.removeHandler(handler)
-        logging.basicConfig(level=logging.INFO,
+        logging.basicConfig(level=LOG_LEVEL,
                             format='%(asctime)s - %(levelname)s - %(message)s',
                             filename=log_filename,
                             filemode='w')

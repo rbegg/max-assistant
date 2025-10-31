@@ -23,20 +23,9 @@ For example, change '7:00 pm' to '7 pm' and '10:00 AM' to '10 AM'
 * Don't make up answers, just admit you don't know and suggest they ask someone they know.
 * Be aware of the entire conversation history.
 
-# Dynamic Context
-<context>
-  <user_data>
-    Name: {user_name}
-    Location: {location}
-  </user_data>
-  <time_data>
-    Current Time: {current_time}
-  </time_data>
-  <schedule_summary>
-    {schedule_summary}
-  </schedule_summary>
-</context>
+# User Information
+- Name: {user_name}
+- Location: {location}
 """),
     MessagesPlaceholder(variable_name="messages"),
-    ("user", "{input}")
 ])

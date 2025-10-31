@@ -1,0 +1,38 @@
+- name: "Person-to-Person"
+  filename: "rel_Person_Person.csv"
+  query: |
+    UNWIND $data AS  row
+    MATCH (a:Person {id: toInteger(row.fromId)})
+    MATCH (b:Person {id: toInteger(row.toId)})
+    CALL apoc.merge.relationship(a,row.relationship,{},{}, b) YIELD rel
+    RETURN count(rel) as count
+- name: "Person-to-Location"
+  filename: "rel_Person_LivesAt_Location.csv"
+  query: |
+    UNWIND $data AS  row
+    MATCH (p:Person {id: toInteger(row.fromId)})
+    MATCH (l:Location {id: toInteger(row.toId)})
+    CALL apoc.merge.relationship(p,row.relationship,{},{}, l) YIELD rel
+    RETURN count(rel) as count
+- name: "User-to-DailyRoutine"
+  filename: "rel_User_DailyRoutine.csv"
+  query: |
+    UNWIND $data AS  row
+    MATCH (p:Person {id: toInteger(row.fromId)})
+    MATCH (r:DailyRoutine {id: toInteger(row.toId)})
+    CALL apoc.merge.relationship(p,row.relationship,{},{}, r) YIELD rel
+    RETURN count(rel) as count
+- name: "User-to-Appointment"
+  filename: "rel_User_Appointment.csv"
+  query: |
+    UNWIND $data AS row
+    MATCH (u:User {id: toInteger(row.fromId)})
+    MATCH (a:Appointment {id: toInteger(row.toId)})
+    WITH u, a, a.date AS d
+    // MERGE the time tree, linking it to the User
+    MERGE (u)-[:HAS_YEAR]->(y:Year {year: d.year})
+    MERGE (y)-[:HAS_MONTH]->(m:Month {month: d.month, name: format(d, 'MMM'), year: d.year})
+    MERGE (m)-[:HAS_DAY]->(day:Day {day: d.day, month: d.month, year: d.year})
+    // Link the Day in the tree to the Appointment
+    MERGE (day)-[:HAS_APPOINTMENT]->(a)
+    return count(*) as count

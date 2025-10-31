@@ -1,0 +1,12 @@
+id,title,dayOfWeek,startTime,duration,startDate,endDate
+1,Breakfast,"Monday,Tuesday,Wednesday,Thursday,Friday,Saturday,Sunday",08:00,60,2024-01-01,
+2,Lunch,"Monday,Tuesday,Wednesday,Thursday,Friday,Saturday,Sunday",12:00,60,2024-01-01,
+3,Dinner,"Monday,Tuesday,Wednesday,Thursday,Friday,Saturday,Sunday",17:30,60,2024-01-01,
+4,Morning Stretch,"Monday,Wednesday,Friday",10:00,30,2024-01-01,
+5,Aquafit,"Monday,Wednesday,Friday",14:00,45,2024-01-01,
+6,Bingo,"Tuesday,Thursday",15:00,60,2024-01-01,
+7,Art Class,Wednesday,10:30,90,2024-01-01,
+8,Book Club,Thursday,10:30,60,2024-01-01,
+9,Movie Night,Friday,19:00,120,2024-01-01,
+10,Live Music,Saturday,19:00,90,2024-01-01,
+11,Chapel Service,Sunday,10:00,60,2024-01-01,

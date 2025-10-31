@@ -1,0 +1,112 @@
+- name: "person"
+  filename: "persons.csv"
+  constraints:
+     - "CREATE CONSTRAINT IF NOT EXISTS FOR (p:Person) REQUIRE p.id IS UNIQUE"
+  query: |
+    UNWIND $data AS row
+    MERGE (p:Person {id: toInteger(row.id)})
+    SET p.firstName = row.firstName, 
+        p.lastName = row.lastName, 
+        p.gender = row.gender,
+        p.dob = CASE WHEN row.dob IS NOT NULL AND row.dob <> '' THEN date(row.dob) ELSE null END,
+        p.dod = CASE WHEN row.dod IS NOT NULL AND row.dod <> '' THEN date(row.dod) ELSE null END,
+        p.phone = row.phone,
+        p.email = row.email,
+        p.notes = row.notes
+    RETURN count(*) as count
+- name: "person:user"
+  constraints:
+  filename: "user.csv"
+  query: |
+    UNWIND $data AS row
+    MERGE (p:Person:User {id: toInteger(row.id)})
+    SET p.firstName = row.firstName, 
+        p.lastName = row.lastName, 
+        p.gender = row.gender,
+        p.dob = CASE WHEN row.dob IS NOT NULL AND row.dob <> '' THEN date(row.dob) ELSE null END,
+        p.dod = CASE WHEN row.dod IS NOT NULL AND row.dod <> '' THEN date(row.dod) ELSE null END,
+        p.phone = row.phone,
+        p.email = row.email,
+        p.notes = row.notes
+    RETURN count(*) as count
+- name: "person:family"
+  constraints:
+  filename: "family.csv"
+  query: |
+    UNWIND $data AS row
+    MERGE (p:Person:Family {id: toInteger(row.id)})
+    SET p.firstName = row.firstName, 
+        p.lastName = row.lastName, 
+        p.gender = row.gender,
+        p.dob = CASE WHEN row.dob IS NOT NULL AND row.dob <> '' THEN date(row.dob) ELSE null END,
+        p.dod = CASE WHEN row.dod IS NOT NULL AND row.dod <> '' THEN date(row.dod) ELSE null END,
+        p.phone = row.phone,
+        p.email = row.email,
+        p.notes = row.notes
+    RETURN count(*) as count
+- name: "Person:Friend"
+  constraints:
+  filename: "friends.csv"
+  query: |
+    UNWIND $data AS row
+    MERGE (p:Person:Friend {id: toInteger(row.id)})
+    SET p.firstName = row.firstName, 
+        p.lastName = row.lastName, 
+        p.gender = row.gender,
+        p.dob = CASE WHEN row.dob IS NOT NULL AND row.dob <> '' THEN date(row.dob) ELSE null END,
+        p.dod = CASE WHEN row.dod IS NOT NULL AND row.dod <> '' THEN date(row.dod) ELSE null END,
+        p.phone = row.phone,
+        p.email = row.email,
+        p.notes = row.notes
+    RETURN count(*) as count
+- name: "Person:Support"
+  constraints:
+  filename: "support_persons.csv"
+  query: |
+    UNWIND $data AS row
+    MERGE (p:Person:Friend {id: toInteger(row.id)})
+    SET p.firstName = row.firstName, 
+        p.lastName = row.lastName, 
+        p.startDate = CASE WHEN row.startDate IS NOT NULL AND row.startDate <> '' THEN date(row.startDate) ELSE null END,
+        p.endDate = CASE WHEN row.endDate IS NOT NULL AND row.endDate <> '' THEN date(row.endDate) ELSE null END,
+        p.phone = row.phone,
+        p.email = row.email,
+        p.notes = row.notes
+    RETURN count(*) as count
+- name: "Appointments"
+  constraints:
+  filename: "appointments.csv"
+  query: |
+    UNWIND $data AS row
+    MERGE (a:Appointment {id: toInteger(row.id)})
+    SET a.date = date(row.date), 
+        a.title = row.title, 
+        a.startTimeDate = localtime(row.time),
+        a.duration = toInteger(row.duration),
+        a.details = row.details
+    RETURN count(*) as count
+- name: "DailyRoutine"
+  constraints:
+  filename: "daily_routine.csv"
+  query: |
+    UNWIND $data AS row
+    MERGE (r:DailyRoutine {id: toInteger(row.id)})
+    SET r.date = date(row.date), 
+        r.title = row.title, 
+        r.dayOfWeek = [item in split(row.dayOfWeek, ',') | trim(item)],
+        r.startTimeDate = localtime(row.startTime),
+        r.duration = toInteger(row.duration),
+        r.startDate = CASE WHEN row.startDate IS NOT NULL AND row.startDate <> '' THEN date(row.startDate) ELSE null END,
+        r.endDate = CASE WHEN row.endDate IS NOT NULL AND row.endDate <> '' THEN date(row.endDate) ELSE null END
+    RETURN count(*) as count
+- name: "Locations"
+  constraints:
+  filename: "locations.csv"
+  query: |
+    UNWIND $data AS row
+    MERGE (l:Location {id: toInteger(row.id)})
+    SET l.name = row.name, 
+        l.address = row.address, 
+        l.room = row.room, 
+        l.type = row.type
+    RETURN count(*) as count

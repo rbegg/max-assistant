@@ -25,6 +25,8 @@ if not isinstance(LOG_LEVEL, int):
     logging.warning(f"Invalid log level '{log_level_str}'. Defaulting to INFO.")
     LOG_LEVEL = logging.INFO
 
+logging.basicConfig(level=LOG_LEVEL, format='XX %(asctime)s - %(levelname)s - %(message)s')
+
 # --- Application Configuration ---
 
 TTS_VOICE = os.environ.get("TTS_VOICE", "en_US-hfc_female-medium")

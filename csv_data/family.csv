@@ -1,0 +1,133 @@
+id,firstName,lastName,gender,dob,dod,phone,email,notes
+2,Thomas,Miller,M,1943-02-15,2020-11-30,519-555-4321,thomas.miller@example.com,Margaret's late husband.
+3,Robert,Smith,M,1920-03-01,2005-07-20,,,Margaret's father.
+4,Eleanor,Smith,F,1922-08-12,2010-01-15,,,Margaret's mother. Maiden name Johnson.
+5,Arthur,Smith,M,1895-01-01,1970-05-05,,,Margaret's paternal grandfather.
+6,Beatrice,Smith,F,1898-02-02,1975-06-06,,,Margaret's paternal grandmother. Maiden name Brown.
+7,William,Johnson,M,1900-03-03,1980-07-07,,,Margaret's maternal grandfather.
+8,Mary,Johnson,F,1902-04-04,1985-08-08,,,Margaret's maternal grandmother. Maiden name Davis.
+9,David,Smith,M,1948-10-20,,519-555-2001,david.smith@example.com,Margaret's brother.
+10,Linda,Smith,F,1950-11-10,,519-555-2001,linda.smith@example.com,David's wife. Maiden name White.
+11,Michael,Miller,M,1970-06-15,,519-555-3001,michael.miller@example.com,Margaret's son.
+12,Sarah,Miller,F,1972-07-20,,519-555-3001,sarah.miller@example.com,Michael's wife. Maiden name Wilson.
+13,Jennifer,Clark,F,1973-09-05,,519-555-3002,jennifer.clark@example.com,Margaret's daughter.
+14,James,Clark,M,1971-10-10,,519-555-3002,james.clark@example.com,Jennifer's husband.
+15,Emily,Miller,F,1998-04-12,,226-555-4001,emily.miller@example.com,Michael's daughter.
+16,Ryan,Miller,M,2001-08-22,,226-555-4002,ryan.miller@example.com,Michael's son.
+17,Olivia,Baker,F,2000-11-30,,226-555-4003,olivia.baker@example.com,Jennifer's daughter. Maiden name Clark.
+18,Liam,Clark,M,2003-01-15,,226-555-4004,liam.clark@example.com,Jennifer's son.
+19,Paul,Smith,M,1975-02-01,,,David's son.
+20,Laura,Smith,F,1978-03-02,,,David's daughter.
+21,George,Smith,M,1925-05-05,2015-01-01,,,Margaret's uncle (father's side).
+22,Helen,Smith,F,1927-06-06,2018-02-02,,,George's wife. Maiden name Lee.
+23,Peter,Smith,M,1950-07-07,,,Margaret's cousin.
+24,Susan,Jones,F,1952-08-08,,,Margaret's cousin. Maiden name Smith.
+25,Brian,Jones,M,1951-09-09,,,Susan's husband.
+26,Patricia,Davis,F,1928-10-10,2019-03-03,,,Margaret's aunt (mother's side). Maiden name Johnson.
+27,Mark,Davis,M,1926-11-11,2017-04-04,,,Patricia's husband.
+28,Chris,Davis,M,1955-12-12,,,Margaret's cousin.
+29,Rachel,Davis,F,1958-01-13,,,Margaret's cousin.
+30,Lucas,Chen,M,1997-05-15,,,Emily's partner.
+31,Adam,Baker,M,1999-06-16,,,Olivia's husband.
+32,Diane,Smith,F,1953-07-17,,,Peter's wife.
+33,Clara,Thompson,F,1923-08-18,2012-05-05,,,Margaret's aunt (father's side). Maiden name Smith.
+34,Ben,Thompson,M,1921-09-19,2010-06-06,,,Clara's husband.
+35,Gary,Thompson,M,1950-10-20,,,Margaret's cousin.
+36,Steven,Johnson,M,1930-11-21,,,Margaret's uncle (mother's side).
+37,Rose,Johnson,F,1932-12-22,,,Steven's wife.
+38,Kevin,Johnson,M,1960-01-23,,,Margaret's cousin.
+39,Maria,Johnson,F,1962-02-24,,,Margaret's cousin.
+40,Anne,Baker,F,2024-05-01,,,Olivia and Adam's daughter (Margaret's great-granddaughter).
+41,Jack,Smith,M,1978-01-01,,,Peter and Diane's son.
+42,Jill,Smith,F,1980-01-01,,,Peter and Diane's daughter.
+43,Henry,Jones,M,1975-01-01,,,Susan and Brian's son.
+44,Grace,Jones,F,1978-01-01,,,Susan and Brian's daughter.
+45,Sam,Davis,M,1980-01-01,,,Chris's son.
+46,William,Davis,M,1982-01-01,,,Chris's son.
+47,Nancy,Davis,F,1956-01-01,,,Chris's wife.
+48,Robert,Thompson,M,1975-01-01,,,Gary's son.
+49,Sarah,Thompson,F,1978-01-01,,,Gary's daughter.
+50,Elizabeth,Thompson,F,1952-01-01,,,Gary's wife.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -26,7 +26,11 @@ async def warm_up_ollama_async(
     retries = 0
     while retries < max_retries:
         try:
-            llm = ChatOllama(model=model_name, base_url=base_url, temperature=temperature)
+            llm = ChatOllama(
+                model=model_name,
+                base_url=base_url,
+                temperature=temperature,
+            )
             parser = StrOutputParser()
             chain = llm | parser
 

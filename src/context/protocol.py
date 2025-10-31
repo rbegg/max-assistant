@@ -6,7 +6,7 @@ This module implements the Model Context Protocol for gathering dynamic context 
 
 import datetime
 import logging
-from src.tools.neo4j import neo4j_client
+from src.clients.neo4j_client import neo4j_client
 
 
 async def get_dynamic_context(username: str) -> dict:
