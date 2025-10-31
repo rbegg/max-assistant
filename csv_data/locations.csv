@@ -1,0 +1,20 @@
+id,name,address,room,type
+1,Sunset Meadows Retirement Community,"123 Wellness Way, Guelph ON",214,support-residence
+2,Sunset Meadows Retirement Community,"123 Wellness Way, Guelph ON",Dining Hall,support-residence
+3,Sunset Meadows Retirement Community,"123 Wellness Way, Guelph ON",Activity Room,support-residence
+4,Sunset Meadows Retirement Community,"123 Wellness Way, Guelph ON",Pool,support-residence
+5,Sunset Meadows Retirement Community,"123 Wellness Way, Guelph ON",Chapel,support-residence
+6,Dr. Alan Brown's Clinic,"456 Health St, Guelph ON",Suite 102,doctors-office
+7,Guelph General Hospital,"789 Hospital Rd, Guelph ON",,hospital
+8,Riverside Cardiology,"456 Health St, Guelph ON",Suite 300,doctors-office
+9,The Modern Barber,"12 Main St, Guelph ON",,store
+10,Royal City Theatre,"50 King St, Guelph ON",,theatre
+11,Frank's Italian Restaurant,"77 Bistro Ave, Guelph ON",,restaurant
+12,Centennial Park,"800 College Ave, Guelph ON",,park
+13,Jennifer Clark's Residence,"15 Maple Drive, Guelph ON",,private-residence
+14,Dr. Evelyn Reed's Clinic (Closed),"99 Old Rd, Guelph ON",,doctors-office
+15,Dr. Smile's Dental,"456 Health St, Guelph ON",Suite 105,doctors-office
+16,Guelph Foot Clinic,"456 Health St, Guelph ON",Suite 20,doctors-office
+17,Michael Miller's Residence,"25 Oak Cres, Guelph ON",,private-residence
+18,Arthur Black's Residence,"123 Wellness Way, Guelph ON",105,support-residence
+19,Betty White's Residence,"123 Wellness Way, Guelph ON",312,support-residence

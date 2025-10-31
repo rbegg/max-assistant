@@ -6,7 +6,7 @@ from fastapi import FastAPI, WebSocket
 from .config import PORT, LOG_LEVEL, LOG_FORMAT, HOST
 from src.api.connection_manager import ConnectionManager
 from src.agent.graph import create_reasoning_engine
-from src.tools.neo4j import neo4j_client
+from src.clients.neo4j_client import neo4j_client
 
 # --- Configuration ---
 logging.basicConfig(level=LOG_LEVEL, format=LOG_FORMAT)

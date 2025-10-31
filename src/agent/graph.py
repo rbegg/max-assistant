@@ -14,61 +14,22 @@ chat applications or AI-powered assistants.
 """
 
 import logging
+from typing import Literal
+from datetime import datetime
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, BaseMessage, ToolMessage
 from langgraph.graph import StateGraph, END
+from langgraph.prebuilt import ToolNode
 
 from src.config import OLLAMA_MODEL_NAME, OLLAMA_BASE_URL, MESSAGE_PRUNING_LIMIT
 from src.agent.prompts import senior_assistant_prompt
 from src.agent.state import GraphState
 from src.api.ollama_preloader import warm_up_ollama_async
-from src.context.protocol import get_dynamic_context
+from src.tools.neo4j_tools import get_schedule_summary
+from src.tools.time_tools import get_current_time
 
 logging.info(f"Ollama Base URL = {OLLAMA_BASE_URL} model = {OLLAMA_MODEL_NAME}")
 
-# This global variable will hold the llm chain after async initialization
-llm_chain = None
-
-location = "Guelph, Ontario, Canada"
-schedule_summary = """
-Breakfast: 8:30am
-Exercise: 10 am
-Mid-day Medication: 12 pm 
-Lunch: 12:30pm
-Dinner: 5:30pm
-Bingo: 7 pm
-Evening Medication: 9 pm
-"""
-
-# --- Define Graph Nodes ---
-async def invoke_llm(state: GraphState):
-    """
-    Node to get a response from the LLM based on the conversation history.
-    """
-    global llm_chain
-    if not llm_chain:
-        logging.error("LLM chain not initialized!")
-        # Return an empty message or handle the error appropriately
-        return {"messages": [HumanMessage(content=state["transcribed_text"])]}
-
-    logging.info(f"Reasoning engine received: {state['transcribed_text']}")
-    logging.info(f"Current message count: {len(state['messages'])}")
-    logging.info(f"Username: {state['username']}")
-
-    # Gather context using the Model Context Protocol
-    dynamic_context = await get_dynamic_context(state["username"])
-
-    # Invoke the LLM with the (potentially pruned) message history and the new user input
-    response = await llm_chain.ainvoke({
-        **dynamic_context,
-        "messages": state["messages"],
-        "input": state["transcribed_text"]
-    })
-
-    logging.info(f"Reasoning engine produced: {response.content}")
-
-    # The node returns the new user message and the AI's response to be added to the state
-    return {"messages": [HumanMessage(content=state["transcribed_text"]), response]}
 
 
 def prune_messages(state: GraphState):
@@ -87,28 +48,85 @@ def prune_messages(state: GraphState):
 
 # --- Build the Graph ---
 async def create_reasoning_engine():
-    """Builds the graph with a pruning step before the LLM call."""
-    global llm_chain
+    """Builds the graph with pruning, model calls, and tool execution."""
 
-    # Asynchronously warm up the LLM
+    # 1. Initialize LLM and Tools
     llm = await warm_up_ollama_async(OLLAMA_MODEL_NAME, OLLAMA_BASE_URL, temperature=0)
-
     if not llm:
         raise RuntimeError("Failed to initialize the LLM.")
 
-    # Create the chain with the initialized LLM
-    llm_chain = senior_assistant_prompt | llm
+    tools = [get_schedule_summary, get_current_time]
+    llm_with_tools = llm.bind_tools(tools)
+
+    # 2. Define Nodes that will be part of the graph
+
+    def prepare_input(state: GraphState):
+        """
+        Takes the user's transcribed text and adds it to the message history
+        as a HumanMessage. This is the first step in the graph.
+        """
+        logging.info("Node: prepare_input")
+        # We only add the user's input if it's a new turn.
+        # If the last message is a ToolMessage, we are in a tool-calling loop
+        # and should not add the user's input again.
+        last_message = state["messages"][-1] if state["messages"] else None
+        if not isinstance(last_message, ToolMessage):
+            return {"messages": [HumanMessage(content=state["transcribed_text"])]}
+        return {}
+
+    async def call_model(state: GraphState):
+        """
+        Node to invoke the LLM with the current state. The user's input is already
+        in the message history.
+        """
+        logging.info("Calling model with current history.")
+
+        # The prompt and LLM with tools are combined to form the chain
+        chain = senior_assistant_prompt | llm_with_tools
+
+        # The 'messages' in the state now contains the user's latest input.
+        response = await chain.ainvoke({
+            "user_name": state["username"],
+            "location": "Not available",
+            "messages": state["messages"],
+        })
+
+        logging.info(f"Model produced: {response.content}")
+
+        # Return only the AI's response to be appended to the state
+        return {"messages": [response]}
+
+    def should_continue(state: GraphState) -> Literal["execute_tools", "end"]:
+        """Conditional node to decide whether to execute tools or end."""
+
+        last_message = state["messages"][-1]
+        if last_message.tool_calls:
+            logging.info("Node: should_continue - Return= execute_tools")
+            return "execute_tools"
+        logging.info("Node: should_continue - Return= end")
+        return "end"
+
+    # 3. Build the workflow
     workflow = StateGraph(GraphState)
 
-    # Add the nodes
+    workflow.add_node("prepare_input", prepare_input)
     workflow.add_node("prune", prune_messages)
-    workflow.add_node("llm", invoke_llm)
+    workflow.add_node("agent", call_model)
+    workflow.add_node("execute_tools", ToolNode(tools))
 
-    # Set the entry point to the new pruning node
-    workflow.set_entry_point("prune")
+    # 4. Add edges
+    workflow.set_entry_point("prepare_input")
+    workflow.add_edge("prepare_input", "prune")
+    workflow.add_edge("prune", "agent")
+    workflow.add_conditional_edges(
+        "agent",
+        should_continue,
+        {
+            "execute_tools": "execute_tools",
+            "end": END,
+        },
+    )
+    workflow.add_edge("execute_tools", "agent")
 
-    # Define the flow: prune -> llm -> end
-    workflow.add_edge("prune", "llm")
-    workflow.add_edge("llm", END)
-
+    # 5. Compile and return
     return workflow.compile()

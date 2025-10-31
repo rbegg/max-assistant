@@ -23,12 +23,15 @@ class Neo4jClient:
         """Fetches a user's schedule from Neo4j and returns it as a string."""
         logging.info(f"Fetching schedule for user: {username}")
         query = """
-        MATCH (u:User {name: $username})-[:HAS_SCHEDULE]->(s:Schedule)
+        MATCH (u:User)
+        WHERE toLower(u.name) = toLower($username)
+        MATCH (u)-[:HAS_SCHEDULE]->(s:Schedule)
         RETURN s.summary
         """
         try:
             records, _, _ = await self._driver.execute_query(query, username=username)
             if records:
+                logging.debug(f"Schedule summary: {records[0]['s.summary']}")
                 return records[0]["s.summary"]
             return "No schedule found."
         except Exception as e:
