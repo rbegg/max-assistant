@@ -91,13 +91,13 @@
   query: |
     UNWIND $data AS row
     MERGE (r:DailyRoutine {id: toInteger(row.id)})
-    SET r.date = date(row.date), 
-        r.title = row.title, 
+    SET r.title = row.title, 
         r.dayOfWeek = [item in split(row.dayOfWeek, ',') | trim(item)],
         r.startTime = localtime(row.startTime),
         r.duration = toInteger(row.duration),
         r.startDate = CASE WHEN row.startDate IS NOT NULL AND row.startDate <> '' THEN date(row.startDate) ELSE null END,
-        r.endDate = CASE WHEN row.endDate IS NOT NULL AND row.endDate <> '' THEN date(row.endDate) ELSE null END
+        r.endDate = CASE WHEN row.endDate IS NOT NULL AND row.endDate <> '' THEN date(row.endDate) ELSE null END,
+        r.details = row.details
     RETURN count(*) as count
 - name: "Locations"
   constraints:

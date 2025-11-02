@@ -6,7 +6,6 @@ This module implements the Model Context Protocol for gathering dynamic context 
 
 import datetime
 import logging
-from src.clients.neo4j_client import neo4j_client
 
 
 async def get_dynamic_context(username: str) -> dict:
@@ -16,7 +15,6 @@ async def get_dynamic_context(username: str) -> dict:
     logging.info(f"MCP: Gathering context for {username}")
 
     current_time = datetime.datetime.now().strftime("%A, %B %d, %Y, %I:%M:%S %p")
-    schedule_summary = await neo4j_client.get_schedule_summary(username)
     location = "Guelph, Ontario, Canada"  # This could also be fetched dynamically
 
     context = {
