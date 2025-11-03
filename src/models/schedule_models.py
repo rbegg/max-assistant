@@ -41,7 +41,7 @@ class Appointment(BaseNeo4jModel):  # <-- Inherits from our base model
     """Represents an Appointment node from Neo4j."""
     id: str
     title: str
-    startTime: time
+    time: time
     date: date
     duration: Optional[int] = None
     details: Optional[str] = None
@@ -50,14 +50,18 @@ class Appointment(BaseNeo4jModel):  # <-- Inherits from our base model
 
 class DailyRoutine(BaseNeo4jModel):  # <-- Also inherits
     """Represents a DailyRoutine node from Neo4j."""
+    # id, title, type, dayOfWeek, time, duration, startDate, endDate, room, details, rating
     id: str
     title: str
+    type: str
     dayOfWeek: List[str] = Field(..., alias="dayOfWeek")
-    startTime: time
+    time: time
     duration: Optional[int] = None
-    startDate: date
-    endDate: Optional[date] = None
+    startDate: date                 # date activity was first offered
+    endDate: Optional[date] = None  # date activity was last offered
+    room: Optional[str] = None
     details: Optional[str] = None
+    rating: Optional[str] = None
 
 
 class CreateAppointmentArgs(BaseModel):

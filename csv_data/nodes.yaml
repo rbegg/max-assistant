@@ -81,7 +81,7 @@
     MERGE (a:Appointment {id: toInteger(row.id)})
     SET a.date = date(row.date), 
         a.title = row.title, 
-        a.startTime = localtime(row.startTime),
+        a.time = localtime(row.time),
         a.duration = toInteger(row.duration),
         a.details = row.details
     RETURN count(*) as count
@@ -91,13 +91,16 @@
   query: |
     UNWIND $data AS row
     MERGE (r:DailyRoutine {id: toInteger(row.id)})
-    SET r.title = row.title, 
+    SET r.title = row.title,
+        r.type = row.type,
         r.dayOfWeek = [item in split(row.dayOfWeek, ',') | trim(item)],
-        r.startTime = localtime(row.startTime),
+        r.time = localtime(row.time),
         r.duration = toInteger(row.duration),
         r.startDate = CASE WHEN row.startDate IS NOT NULL AND row.startDate <> '' THEN date(row.startDate) ELSE null END,
         r.endDate = CASE WHEN row.endDate IS NOT NULL AND row.endDate <> '' THEN date(row.endDate) ELSE null END,
-        r.details = row.details
+        r.room = row.room,
+        r.details = row.details,
+        r.rating = row.rating
     RETURN count(*) as count
 - name: "Locations"
   constraints:
