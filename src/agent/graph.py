@@ -31,12 +31,7 @@ from src.tools.schedule_tools import get_full_schedule, get_appointments_for_dat
 from src.tools.time_tools import get_current_datetime
 from src.config import OLLAMA_MODEL_NAME, OLLAMA_BASE_URL, MESSAGE_PRUNING_LIMIT
 from src.config import NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD
-
-
-
-
-
-
+from src.utils.datetime_utils import current_datetime
 
 
 def prune_messages(state: GraphState):
@@ -103,6 +98,7 @@ async def create_reasoning_engine():
         response = await chain.ainvoke({
             "user_name": state["username"],
             "location": "Not available",
+            "current_datetime": current_datetime(),
             "messages": state["messages"],
         })
 

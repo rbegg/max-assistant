@@ -22,16 +22,13 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-
-
-
-
 @tool
 async def get_appointments_for_date(target_date: str) -> str:
     """
-    Use this tool ONLY if the user asks specifically for 'appointments'
+    Use this tool if the user asks specifically for 'appointments'
     and NOT for their general 'schedule'. For general schedule
     questions, use 'get_full_schedule'.
+    The target_date arg must be a valid iso date string.
     """
     logger.info(f"Tool: get_appointments_for_date for {target_date}")
     query = """
@@ -76,9 +73,9 @@ async def get_appointments_for_date(target_date: str) -> str:
 @tool
 async def get_routines_for_date(target_date: str) -> str:
     """
-    Use this tool ONLY if the user asks specifically for 'daily routines',
+    Use this tool if the user asks specifically for 'activities', 'daily routines',
     'meal times', or 'medication times'. For general schedule
-    questions, use 'get_full_schedule'.
+    questions, use 'get_full_schedule'. The target_date arg must be a valid iso date string.
     """
     logger.info(f"Tool: get_routines_for_date for {target_date}")
     query = """
@@ -121,6 +118,7 @@ async def get_full_schedule(target_date: str) -> str:
     Use this as the DEFAULT tool for any general schedule question,
     like 'What's my schedule?', 'What's on today?', or 'Am I busy tomorrow?'.
     It combines appointments and daily routines into a single, sorted list.
+    The target_date arg must be a valid iso date string.
     """
     logger.info(f"Tool: get_full_schedule for {target_date}")
 

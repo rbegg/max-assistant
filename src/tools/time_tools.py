@@ -6,7 +6,7 @@ This module defines a tool for getting the current time.
 import logging
 from langchain_core.tools import tool
 from pydantic import BaseModel
-from datetime import datetime
+from src.utils.datetime_utils import current_datetime
 
 class GetCurrentDateTimeInput(BaseModel):
     """Input schema for get_current_time."""
@@ -16,12 +16,8 @@ class GetCurrentDateTimeInput(BaseModel):
 async def get_current_datetime() -> dict:
     """
     Returns the current date and time as an ISO formatted string, without seconds.
-    Use this tool whenever the user asks for the current time or date.
+    Use this tool whenever the user asks for the current time, date or queries about today, tomorrow, etc.
     This tool does not take any parameters.
     """
     logging.info("Fetching current time")
-    dt_str = datetime.now().strftime("%Y-%m-%dT%H:%M")
-    day = datetime.now().isoweekday()
-    month = datetime.now().strftime("%B")
-    year = datetime.now().year
-    return {'ISODateTime': dt_str, 'Day': day, 'Month': month, 'Year': year}
+    return current_datetime()
