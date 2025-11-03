@@ -1,4 +1,4 @@
-id,date,title,startTime,duration,details
+id,date,title,time,duration,details
 1,2025-11-03,Doctor Checkup,11:00,30,Annual checkup with Dr. Brown.
 2,2025-11-10,Haircut,14:00,45,Trim and style.
 3,2025-11-17,Family Dinner,18:00,120,Dinner with Michael and Jennifer's families.

@@ -15,21 +15,24 @@ chat applications or AI-powered assistants.
 
 import logging
 from typing import Literal
-from datetime import datetime
+import functools
 
 from langchain_core.messages import HumanMessage, BaseMessage, ToolMessage
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
 
-from src.config import OLLAMA_MODEL_NAME, OLLAMA_BASE_URL, MESSAGE_PRUNING_LIMIT
+
 from src.agent.prompts import senior_assistant_prompt
 from src.agent.state import GraphState
 from src.api.ollama_preloader import warm_up_ollama_async
-from src.tools.neo4j_tools import get_schedule_summary
-from src.tools.time_tools import get_current_time
-
-logging.info(f"Ollama Base URL = {OLLAMA_BASE_URL} model = {OLLAMA_MODEL_NAME}")
-
+from src.clients.neo4j_client import Neo4jClient
+from src.clients import neo4j_client as neo4j_client_module
+from src.tools.schedule_tools import (
+    get_full_schedule, get_appointments_for_date, get_routines_for_date, get_activities_info )
+from src.tools.time_tools import get_current_datetime
+from src.config import OLLAMA_MODEL_NAME, OLLAMA_BASE_URL, MESSAGE_PRUNING_LIMIT
+from src.config import NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD
+from src.utils.datetime_utils import current_datetime
 
 
 def prune_messages(state: GraphState):
@@ -50,20 +53,28 @@ def prune_messages(state: GraphState):
 async def create_reasoning_engine():
     """Builds the graph with pruning, model calls, and tool execution."""
 
+
+    logging.info(f"Ollama Base URL = {OLLAMA_BASE_URL} model = {OLLAMA_MODEL_NAME}")
+
     # 1. Initialize LLM and Tools
     llm = await warm_up_ollama_async(OLLAMA_MODEL_NAME, OLLAMA_BASE_URL, temperature=0)
     if not llm:
         raise RuntimeError("Failed to initialize the LLM.")
 
-    tools = [get_schedule_summary, get_current_time]
+    neo4j_client_module.client = await Neo4jClient.create(NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD)
+    if not neo4j_client_module.client:
+        raise RuntimeError("Failed to initialize the Neo4j client.")
+
+    # 1.4. Create the final tools list from the corrected objects
+    tools = [get_full_schedule, get_appointments_for_date, get_routines_for_date, get_activities_info, get_current_datetime]
+
+    # 1.55. Bind the tools
     llm_with_tools = llm.bind_tools(tools)
 
     # 2. Define Nodes that will be part of the graph
 
     def prepare_input(state: GraphState):
         """
-        Takes the user's transcribed text and adds it to the message history
-        as a HumanMessage. This is the first step in the graph.
         """
         logging.info("Node: prepare_input")
         # We only add the user's input if it's a new turn.
@@ -88,6 +99,7 @@ async def create_reasoning_engine():
         response = await chain.ainvoke({
             "user_name": state["username"],
             "location": "Not available",
+            "current_datetime": current_datetime(),
             "messages": state["messages"],
         })
 

@@ -25,8 +25,8 @@
         "PARTNER_OF"
     ],
     "schema": [
-        "Appointment {properties: ['date', 'details', 'duration', 'id', 'title']}",
-        "DailyRoutine {properties: ['dayOfWeek', 'duration', 'id', 'startDate', 'startTimeDate', 'title']}",
+        "Appointment {properties: ['date', 'details', 'duration', 'id', 'time', 'title']}",
+        "DailyRoutine {properties: ['dayOfWeek', 'details', 'duration', 'id', 'rating', 'room', 'startDate', 'time', 'title', 'type']}",
         "Day {properties: ['day', 'month', 'year']}",
         "Family {properties: ['dob', 'dod', 'email', 'firstName', 'gender', 'id', 'lastName', 'notes', 'phone']}",
         "Friend {properties: ['dob', 'email', 'endDate', 'firstName', 'gender', 'id', 'lastName', 'notes', 'phone', 'startDate']}",

@@ -1,12 +1,12 @@
-id,title,dayOfWeek,startTime,duration,startDate,endDate
-1,Breakfast,"Monday,Tuesday,Wednesday,Thursday,Friday,Saturday,Sunday",08:00,60,2024-01-01,
-2,Lunch,"Monday,Tuesday,Wednesday,Thursday,Friday,Saturday,Sunday",12:00,60,2024-01-01,
-3,Dinner,"Monday,Tuesday,Wednesday,Thursday,Friday,Saturday,Sunday",17:30,60,2024-01-01,
-4,Morning Stretch,"Monday,Wednesday,Friday",10:00,30,2024-01-01,
-5,Aquafit,"Monday,Wednesday,Friday",14:00,45,2024-01-01,
-6,Bingo,"Tuesday,Thursday",15:00,60,2024-01-01,
-7,Art Class,Wednesday,10:30,90,2024-01-01,
-8,Book Club,Thursday,10:30,60,2024-01-01,
-9,Movie Night,Friday,19:00,120,2024-01-01,
-10,Live Music,Saturday,19:00,90,2024-01-01,
-11,Chapel Service,Sunday,10:00,60,2024-01-01,
+id,title,type,dayOfWeek,time,duration,startDate,endDate,room,details,rating
+1,Breakfast,meal,"Monday,Tuesday,Wednesday,Thursday,Friday,Saturday,Sunday",09:00,60,2024-01-01,,dinning room,open seating,
+2,Lunch,meal,"Monday,Tuesday,Wednesday,Thursday,Friday,Saturday,Sunday",12:00,60,2024-01-01,,dinning room,assigned seating,
+3,Dinner,meal,"Monday,Tuesday,Wednesday,Thursday,Friday,Saturday,Sunday",17:30,60,2024-01-01,,dinning room,assigned seating,
+4,Morning Stretch,exercise,"Monday,Wednesday,Friday",10:00,30,2024-01-01,,"exercise room, first floor",,ok
+5,Chair Pilates,exercise,"Monday,Wednesday,Friday",14:00,45,2024-01-01,,"exercise room, first floor", ,ok
+6,Bingo,activity,"Tuesday,Thursday",15:00,60,2024-01-01,,dinning room,,strongly dislike
+7,Art Class,activity,Wednesday,10:30,90,2024-01-01,,in the activity room,,ok
+8,Book Club,activity,Thursday,10:30,60,2024-01-01,,in the activity room,,dislike
+9,Movie Night,activity,Friday,19:00,120,2024-01-01,,movie room,,ok
+10,Live Music,activity,Saturday,19:00,90,2024-01-01,,dinning room,,really enjoy
+11,Chapel Service,activity,Sunday,10:00,60,2024-01-01,,chapel,,enjoy
