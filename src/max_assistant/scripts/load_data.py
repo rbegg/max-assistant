@@ -1,15 +1,12 @@
-from itertools import count
-from pathlib import Path
 import csv
 import yaml
 import json
-from collections import defaultdict
 from neo4j import GraphDatabase
 from argparse import ArgumentParser
 
 
-from src.scripts.local_config import SCRIPT_DIR
-from src.config import NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD
+from max_assistant.scripts.local_config import SCRIPT_DIR
+from max_assistant.config import NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD
 
 # --- Configuration ---
 DATA_DIR = SCRIPT_DIR / "../../csv_data"

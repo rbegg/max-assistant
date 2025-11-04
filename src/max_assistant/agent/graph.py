@@ -15,24 +15,23 @@ chat applications or AI-powered assistants.
 
 import logging
 from typing import Literal
-import functools
 
-from langchain_core.messages import HumanMessage, BaseMessage, ToolMessage
+from langchain_core.messages import HumanMessage, ToolMessage
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
 
 
-from src.agent.prompts import senior_assistant_prompt
-from src.agent.state import GraphState
-from src.api.ollama_preloader import warm_up_ollama_async
-from src.clients.neo4j_client import Neo4jClient
-from src.clients import neo4j_client as neo4j_client_module
-from src.tools.schedule_tools import (
+from max_assistant.agent.prompts import senior_assistant_prompt
+from max_assistant.agent.state import GraphState
+from max_assistant.api.ollama_preloader import warm_up_ollama_async
+from max_assistant.clients.neo4j_client import Neo4jClient
+from max_assistant.clients import neo4j_client as neo4j_client_module
+from max_assistant.tools.schedule_tools import (
     get_full_schedule, get_appointments_for_date, get_routines_for_date, get_activities_info )
-from src.tools.time_tools import get_current_datetime
-from src.config import OLLAMA_MODEL_NAME, OLLAMA_BASE_URL, MESSAGE_PRUNING_LIMIT
-from src.config import NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD
-from src.utils.datetime_utils import current_datetime
+from max_assistant.tools.time_tools import get_current_datetime
+from max_assistant.config import OLLAMA_MODEL_NAME, OLLAMA_BASE_URL, MESSAGE_PRUNING_LIMIT
+from max_assistant.config import NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD
+from max_assistant.utils.datetime_utils import current_datetime
 
 
 def prune_messages(state: GraphState):

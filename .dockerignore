@@ -1,0 +1,27 @@
+# Git files
+.git/
+.gitignore
+
+# Python cache
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Local venv
+.venv/
+venv/
+
+# IDE files
+.idea/
+.vscode/
+
+# Build artifacts
+build/
+dist/
+*.egg-info
+
+logs/
+
+# Docker files
+.dockerignore
+Dockerfile

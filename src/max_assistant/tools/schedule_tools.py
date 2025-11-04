@@ -10,9 +10,9 @@ from typing import Optional, Type
 from langchain_core.tools import tool
 from pydantic import ValidationError, BaseModel
 
-from src.clients import neo4j_client
+from max_assistant.clients import neo4j_client
 # Import our new Pydantic models
-from src.models.schedule_models import (
+from max_assistant.models.schedule_models import (
     Appointment,
     DailyRoutine,
     CreateAppointmentArgs

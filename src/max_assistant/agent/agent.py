@@ -8,8 +8,8 @@ manages conversation state. It provides a clean interface for text-based interac
 import logging
 from uuid import uuid4
 
-from src.config import DEFAULT_USERNAME, TTS_VOICE
-from src.agent.state import GraphState
+from max_assistant.config import DEFAULT_USERNAME, TTS_VOICE
+from max_assistant.agent.state import GraphState
 
 
 class Agent:

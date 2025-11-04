@@ -6,7 +6,7 @@ This module defines a tool for getting the current time.
 import logging
 from langchain_core.tools import tool
 from pydantic import BaseModel
-from src.utils.datetime_utils import current_datetime
+from max_assistant.utils.datetime_utils import current_datetime
 
 class GetCurrentDateTimeInput(BaseModel):
     """Input schema for get_current_time."""
