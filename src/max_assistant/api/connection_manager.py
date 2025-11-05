@@ -25,6 +25,8 @@ from max_assistant.config import QUEUE_GET_TIMEOUT
 from max_assistant.api.stt_service import transcript_generator
 from max_assistant.api.tts_service import synthesize_speech
 
+logger = logging.getLogger(__name__)
+
 
 class ConnectionManager:
     """Manages the state and logic for a single client WebSocket connection."""
@@ -40,7 +42,7 @@ class ConnectionManager:
 
     async def handle_connection(self):
         """Manages all tasks for a single client connection."""
-        logging.info("Handling new client connection.")
+        logger.info("Handling new client connection.")
         tasks = [
             asyncio.create_task(self._agent_loop()),
             asyncio.create_task(self._text_input_handler_loop()),
@@ -63,7 +65,7 @@ class ConnectionManager:
                 if not task.done():
                     task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
-            logging.info("Connection handler for a client finished.")
+            logger.info("Connection handler for a client finished.")
 
     async def _client_reader(self):
         """Reads messages from the WebSocket and puts them into the appropriate queues."""
@@ -77,7 +79,7 @@ class ConnectionManager:
                 elif 'bytes' in message:
                     await self.binary_input_queue.put(message['bytes'])
         except WebSocketDisconnect:
-            logging.info("Client disconnected (reader).")
+            logger.info("Client disconnected (reader).")
         except Exception as e:
             logging.error(f"WS reader error: {e}", exc_info=True)
         finally:
@@ -93,9 +95,9 @@ class ConnectionManager:
                 else:
                     await self.ws.send_text(str(message))
         except WebSocketDisconnect:
-            logging.info("Client disconnected (writer).")
+            logger.info("Client disconnected (writer).")
         except asyncio.CancelledError:
-            logging.info("Client writer cancelled.")
+            logger.info("Client writer cancelled.")
         except Exception as e:
             logging.error(f"WS writer error: {e}", exc_info=True)
         finally:
@@ -106,7 +108,7 @@ class ConnectionManager:
         while not self._shutdown_event.is_set():
             try:
                 text_data = await asyncio.wait_for(self.text_input_queue.get(), timeout=QUEUE_GET_TIMEOUT)
-                logging.info(f"TEXT_HANDLER: Received text from client: {text_data}")
+                logger.info(f"TEXT_HANDLER: Received text from client: {text_data}")
                 client_dict = json.loads(text_data)
                 if "username" in client_dict:
                     self.agent.set_username(client_dict["username"])
@@ -118,7 +120,7 @@ class ConnectionManager:
                 break
             except Exception as e:
                 logging.error(f"Error in text input handler: {e}", exc_info=True)
-        logging.info("Text input handler loop has stopped.")
+        logger.info("Text input handler loop has stopped.")
 
     async def _agent_loop(self):
         """Handles STT, reasoning, and TTS for the connection."""
@@ -141,13 +143,13 @@ class ConnectionManager:
 
                     output_audio = await synthesize_speech(llm_response,
                                                            self.agent.get_voice())
-                    logging.info("Sending audio Response.")
+                    logger.info("Sending audio Response.")
                     await self.client_output_queue.put(output_audio)
 
                 except (json.JSONDecodeError, AttributeError) as e:
                     logging.warning(f"Could not parse STT message: {stt_message_str} ({e})")
         except asyncio.CancelledError:
-            logging.info("Agent loop cancelled.")
+            logger.info("Agent loop cancelled.")
         except Exception as e:
             logging.error(f"Error in agent loop: {e}", exc_info=True)
-        logging.info("Agent loop has stopped.")
+        logger.info("Agent loop has stopped.")

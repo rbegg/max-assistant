@@ -50,6 +50,7 @@ COPY --from=builder --chown=appuser:appuser /opt/venv/lib/python${PYTHON_VERSION
 COPY --chown=appuser:appuser src/ ./src
 COPY --chown=appuser:appuser pyproject.toml .
 COPY --chown=appuser:appuser requirements.txt .
+COPY --chown=appuser:appuser log_config.json .
 
 # Switch to the non-root user
 USER appuser

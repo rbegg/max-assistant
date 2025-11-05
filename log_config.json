@@ -1,0 +1,89 @@
+{
+    "version": 1,
+    "disable_existing_loggers": false,
+    "formatters": {
+        "default": {
+            "()": "uvicorn.logging.DefaultFormatter",
+            "fmt": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+            "use_colors": null
+        }
+    },
+    "handlers": {
+        "default": {
+            "formatter": "default",
+            "class": "logging.StreamHandler",
+            "stream": "ext://sys.stderr"
+        }
+    },
+    "loggers": {
+        "": {
+            "handlers": ["default"],
+            "level": "INFO"
+        },
+        "uvicorn": {
+            "handlers": ["default"],
+            "level": "INFO",
+            "propagate": false
+        },
+        "max_assistant.agent": {
+            "handlers": ["default"],
+            "level": "NOTSET",
+            "propagate": false
+        },
+        "max_assistant.api.connection_manager": {
+            "handlers": ["default"],
+            "level": "NOTSET",
+            "propagate": false
+        },
+        "max_assistant.api.ollama_preloader": {
+            "handlers": ["default"],
+            "level": "NOTSET",
+            "propagate": false
+        },
+        "max_assistant.api.stt_service": {
+            "handlers": ["default"],
+            "level": "NOTSET",
+            "propagate": false
+        },
+        "max_assistant.api.tts_service": {
+            "handlers": ["default"],
+            "level": "NOTSET",
+            "propagate": false
+        },
+        "max_assistant.clients.neo4j_client": {
+            "handlers": ["default"],
+            "level": "NOTSET",
+            "propagate": false
+        },
+        "max_assistant.context.protocol": {
+            "handlers": ["default"],
+            "level": "NOTSET",
+            "propagate": false
+        },
+        "max_assistant.models.schedule_models": {
+            "handlers": ["default"],
+            "level": "NOTSET",
+            "propagate": false
+        },
+        "max_assistant.scripts": {
+            "handlers": ["default"],
+            "level": "NOTSET",
+            "propagate": false
+        },
+        "max_assistant.tools": {
+            "handlers": ["default"],
+            "level": "NOTSET",
+            "propagate": false
+        },
+        "max_assistant.config": {
+            "handlers": ["default"],
+            "level": "NOTSET",
+            "propagate": false
+        },
+        "max_assistant.main": {
+            "handlers": ["default"],
+            "level": "NOTSET",
+            "propagate": false
+        }
+    }
+}

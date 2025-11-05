@@ -1,3 +1,5 @@
+import json
+import os
 import uvicorn
 import asyncio
 import logging
@@ -8,13 +10,36 @@ from max_assistant.api.connection_manager import ConnectionManager
 from max_assistant.agent.graph import create_reasoning_engine
 from max_assistant.clients.neo4j_client import Neo4jClient
 
-# --- Configuration ---
-logging.basicConfig(level=LOG_LEVEL, format=LOG_FORMAT)
-
-
 # Compiled reasoning engine.
 reasoning_engine = None
 reasoning_engine_preload_task = None
+
+
+def setup_logging(config_path='log_config.json'):
+    """Loads logging configuration from a JSON file."""
+
+    # Make sure the 'logs' directory exists (if using a file handler)
+    os.makedirs('logs', exist_ok=True)
+
+    try:
+        with open(config_path, 'rt') as f:
+            config = json.load(f)
+
+        # Apply the configuration
+        logging.config.dictConfig(config)
+
+    except FileNotFoundError:
+        print(f"Error: Config file '{config_path}' not found. Using basic config.")
+        logging.basicConfig(level=logging.INFO)
+    except json.JSONDecodeError:
+        print(f"Error: Could not parse '{config_path}'. Using basic config.")
+        logging.basicConfig(level=logging.INFO)
+    except Exception as e:
+        print(f"An error occurred during logging setup: {e}")
+        logging.basicConfig(level=logging.INFO)
+
+
+setup_logging()
 
 
 @asynccontextmanager
@@ -36,6 +61,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
 
 @app.get("/health")
 def health_check():

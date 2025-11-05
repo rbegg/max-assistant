@@ -4,7 +4,7 @@ from websockets.client import connect as websocket_connect
 from websockets.exceptions import ConnectionClosed
 from max_assistant.config import STT_WEBSOCKET_URL
 
-
+logger = logging.getLogger(__name__)
 
 async def _forward_audio(audio_queue: asyncio.Queue, stt_ws):
     """A helper task to forward audio from an asyncio Queue to the STT service."""
@@ -13,7 +13,7 @@ async def _forward_audio(audio_queue: asyncio.Queue, stt_ws):
             audio_chunk = await audio_queue.get()
             await stt_ws.send(audio_chunk)
     except (ConnectionClosed):
-        logging.info("STT connection closed during audio forwarding.")
+        logger.info("STT connection closed during audio forwarding.")
     except Exception as e:
         logging.error(f"Error forwarding audio: {e}")
 
@@ -28,7 +28,7 @@ async def transcript_generator(audio_queue: asyncio.Queue):
         forwarder_task = None
         try:
             async with websocket_connect(STT_WEBSOCKET_URL) as stt_ws:
-                logging.info(f"Connected to STT service at {STT_WEBSOCKET_URL}.")
+                logger.info(f"Connected to STT service at {STT_WEBSOCKET_URL}.")
 
                 # Start the concurrent task to forward audio from the queue
                 forwarder_task = asyncio.create_task(_forward_audio(audio_queue, stt_ws))
@@ -36,7 +36,7 @@ async def transcript_generator(audio_queue: asyncio.Queue):
                 # Listen for responses from the STT service
                 while True:
                     message_str = await stt_ws.recv()
-                    logging.info(f"Received message from STT: {message_str}")
+                    logger.info(f"Received message from STT: {message_str}")
                     yield message_str
 
         except (ConnectionRefusedError, ConnectionClosed):

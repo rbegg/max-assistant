@@ -5,20 +5,19 @@ Defines Pydantic models for the schedule-related tools and neo4j nodes
 """
 import json
 import asyncio
+import logging
 from typing import Optional, Type
 
 from langchain_core.tools import tool
 from pydantic import ValidationError, BaseModel
 
 from max_assistant.clients import neo4j_client
-# Import our new Pydantic models
 from max_assistant.models.schedule_models import (
     Appointment,
     DailyRoutine,
     CreateAppointmentArgs
 )
 
-import logging
 logger = logging.getLogger(__name__)
 
 
@@ -60,6 +59,7 @@ async def _query_and_validate_nodes(
         logger.error(f"Unexpected error: {e}")
         return json.dumps({"error": "Data parsing failed", "details": "Unexpected error."})
 
+
 @tool
 async def get_appointments_for_date(target_date: str) -> str:
     """
@@ -71,11 +71,14 @@ async def get_appointments_for_date(target_date: str) -> str:
     logger.info(f"Tool: get_appointments_for_date for {target_date}")
     query = """
             WITH datetime($targetDate) AS dt
-                OPTIONAL MATCH (d: Day {year : dt.year, month : dt.month, day : dt.day})
-                OPTIONAL MATCH (d)-[:HAS_APPOINTMENT]->(appt:Appointment)
-            WITH appt 
+                OPTIONAL MATCH (d: Day {year : dt.year
+               , month : dt.month
+               , day : dt.day})
+                OPTIONAL MATCH (d)-[:HAS_APPOINTMENT]-
+               >(appt:Appointment)
+            WITH appt
             WHERE appt IS NOT NULL
-                RETURN properties(appt) AS appointment 
+                RETURN properties(appt) AS appointment \
             """
 
     params = {"targetDate": target_date}
@@ -136,7 +139,7 @@ async def get_full_schedule(target_date: str) -> str:
         # Run both tools at the same time
         results = await asyncio.gather(
             get_appointments_for_date.ainvoke(target_date),
-            get_routines_for_date.ainvoke(target_date,)
+            get_routines_for_date.ainvoke(target_date, )
         )
 
         appts_json_str, routines_json_str = results
@@ -173,6 +176,7 @@ async def get_full_schedule(target_date: str) -> str:
         error_type = e.__class__.__name__
         logger.error(f"Unexpected error in get_full_schedule: {e}", exc_info=True)
         return json.dumps({"error": f"Internal error combining schedule: {error_type}"})
+
 
 @tool(args_schema=CreateAppointmentArgs)
 async def create_appointment(
@@ -215,8 +219,9 @@ async def create_appointment(
     result = await neo4j_client.client.execute_query(query, params)
     return json.dumps(result, indent=2)
 
+
 @tool
-async def get_activities_info( ) -> str:
+async def get_activities_info() -> str:
     """
     Use this tool to get details about available Activities.
     The rating is an indicator of how much the user dislikes or enjoys an activity, favorites should include enjoy and
