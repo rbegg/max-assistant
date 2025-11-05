@@ -10,3 +10,4 @@ httpx
 websockets
 wyoming
 neo4j
+isort

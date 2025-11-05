@@ -15,25 +15,25 @@ chat applications or AI-powered assistants.
 
 import logging
 from typing import Literal
-import functools
 
-from langchain_core.messages import HumanMessage, BaseMessage, ToolMessage
+from langchain_core.messages import HumanMessage, ToolMessage
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
 
 
-from src.agent.prompts import senior_assistant_prompt
-from src.agent.state import GraphState
-from src.api.ollama_preloader import warm_up_ollama_async
-from src.clients.neo4j_client import Neo4jClient
-from src.clients import neo4j_client as neo4j_client_module
-from src.tools.schedule_tools import (
+from max_assistant.agent.prompts import senior_assistant_prompt
+from max_assistant.agent.state import GraphState
+from max_assistant.api.ollama_preloader import warm_up_ollama_async
+from max_assistant.clients.neo4j_client import Neo4jClient
+from max_assistant.clients import neo4j_client as neo4j_client_module
+from max_assistant.tools.schedule_tools import (
     get_full_schedule, get_appointments_for_date, get_routines_for_date, get_activities_info )
-from src.tools.time_tools import get_current_datetime
-from src.config import OLLAMA_MODEL_NAME, OLLAMA_BASE_URL, MESSAGE_PRUNING_LIMIT
-from src.config import NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD
-from src.utils.datetime_utils import current_datetime
+from max_assistant.tools.time_tools import get_current_datetime
+from max_assistant.config import OLLAMA_MODEL_NAME, OLLAMA_BASE_URL, MESSAGE_PRUNING_LIMIT
+from max_assistant.config import NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD
+from max_assistant.utils.datetime_utils import current_datetime
 
+logger = logging.getLogger(__name__)
 
 def prune_messages(state: GraphState):
     """
@@ -41,7 +41,7 @@ def prune_messages(state: GraphState):
     """
     messages = state["messages"]
     if len(messages) > MESSAGE_PRUNING_LIMIT:
-        logging.info(f"--- Pruning messages from {len(messages)} down to {MESSAGE_PRUNING_LIMIT} ---")
+        logger.info(f"--- Pruning messages from {len(messages)} down to {MESSAGE_PRUNING_LIMIT} ---")
         # This overwrites the 'messages' key in the state with the pruned list
         return {"messages": messages[-MESSAGE_PRUNING_LIMIT:]}
 
@@ -54,7 +54,7 @@ async def create_reasoning_engine():
     """Builds the graph with pruning, model calls, and tool execution."""
 
 
-    logging.info(f"Ollama Base URL = {OLLAMA_BASE_URL} model = {OLLAMA_MODEL_NAME}")
+    logger.info(f"Ollama Base URL = {OLLAMA_BASE_URL} model = {OLLAMA_MODEL_NAME}")
 
     # 1. Initialize LLM and Tools
     llm = await warm_up_ollama_async(OLLAMA_MODEL_NAME, OLLAMA_BASE_URL, temperature=0)
@@ -76,7 +76,7 @@ async def create_reasoning_engine():
     def prepare_input(state: GraphState):
         """
         """
-        logging.info("Node: prepare_input")
+        logger.info("Node: prepare_input")
         # We only add the user's input if it's a new turn.
         # If the last message is a ToolMessage, we are in a tool-calling loop
         # and should not add the user's input again.
@@ -90,7 +90,7 @@ async def create_reasoning_engine():
         Node to invoke the LLM with the current state. The user's input is already
         in the message history.
         """
-        logging.info("Calling model with current history.")
+        logger.info("Calling model with current history.")
 
         # The prompt and LLM with tools are combined to form the chain
         chain = senior_assistant_prompt | llm_with_tools
@@ -103,7 +103,7 @@ async def create_reasoning_engine():
             "messages": state["messages"],
         })
 
-        logging.info(f"Model produced: {response.content}")
+        logger.info(f"Model produced: {response.content}")
 
         # Return only the AI's response to be appended to the state
         return {"messages": [response]}
@@ -113,9 +113,9 @@ async def create_reasoning_engine():
 
         last_message = state["messages"][-1]
         if last_message.tool_calls:
-            logging.info("Node: should_continue - Return= execute_tools")
+            logger.info("Node: should_continue - Return= execute_tools")
             return "execute_tools"
-        logging.info("Node: should_continue - Return= end")
+        logger.info("Node: should_continue - Return= end")
         return "end"
 
     # 3. Build the workflow

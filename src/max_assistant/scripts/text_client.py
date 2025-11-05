@@ -18,9 +18,9 @@ if not load_dotenv('../.env.local'):
     print("Failed to load environment variables.")
     exit(1)
 
-from src.config import LOG_LEVEL
-from src.agent.agent import Agent
-from src.agent.graph import create_reasoning_engine
+from max_assistant.config import LOG_LEVEL
+from max_assistant.agent.agent import Agent
+from max_assistant.agent.graph import create_reasoning_engine
 
 
 

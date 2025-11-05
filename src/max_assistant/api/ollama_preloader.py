@@ -5,6 +5,7 @@ import logging
 from langchain_ollama import ChatOllama
 from langchain_core.output_parsers import StrOutputParser
 
+logger = logging.getLogger(__name__)
 
 async def warm_up_ollama_async(
         model_name: str,
@@ -17,11 +18,11 @@ async def warm_up_ollama_async(
     """
     Asynchronously initializes and preloads a model in Ollama with retry logic.
     """
-    logging.info("=" * 50)
-    logging.info("🚀 Initializing Ollama (Async)...")
-    logging.info(f"   Model: {model_name}")
-    logging.info(f"   Target: {base_url}")
-    logging.info("=" * 50)
+    logger.info("=" * 50)
+    logger.info("🚀 Initializing Ollama (Async)...")
+    logger.info(f"   Model: {model_name}")
+    logger.info(f"   Target: {base_url}")
+    logger.info("=" * 50)
 
     retries = 0
     while retries < max_retries:
@@ -34,7 +35,7 @@ async def warm_up_ollama_async(
             parser = StrOutputParser()
             chain = llm | parser
 
-            logging.info(f"🔥 Sending async warm-up request to load '{model_name}' into memory.")
+            logger.info(f"🔥 Sending async warm-up request to load '{model_name}' into memory.")
 
             start_time = time.monotonic()
 
@@ -46,9 +47,9 @@ async def warm_up_ollama_async(
             end_time = time.monotonic()
             duration = end_time - start_time
 
-            logging.info(f"\n✅ Async warm-up complete! Model is ready.")
-            logging.info(f"   Warm-up duration: {duration:.2f} seconds.")
-            logging.info("-" * 50)
+            logger.info(f"\n✅ Async warm-up complete! Model is ready.")
+            logger.info(f"   Warm-up duration: {duration:.2f} seconds.")
+            logger.info("-" * 50)
 
             return llm
 

@@ -8,9 +8,10 @@ manages conversation state. It provides a clean interface for text-based interac
 import logging
 from uuid import uuid4
 
-from src.config import DEFAULT_USERNAME, TTS_VOICE
-from src.agent.state import GraphState
+from max_assistant.config import DEFAULT_USERNAME, TTS_VOICE
+from max_assistant.agent.state import GraphState
 
+logger = logging.getLogger(__name__)
 
 class Agent:
     """Encapsulates the reasoning engine and conversation state management."""
@@ -34,7 +35,7 @@ class Agent:
             "thread_id": self.conversation_state.get("thread_id", str(uuid4())),
             "voice": self.conversation_state.get("voice", TTS_VOICE)
         }
-        logging.info(f"Calling Reasoning engine with: {text_input}")
+        logger.info(f"Calling Reasoning engine with: {text_input}")
         final_state = await self.reasoning_engine.ainvoke(inputs)
         self.conversation_state = final_state
 
@@ -48,7 +49,7 @@ class Agent:
 
     def set_thread_id(self, thread_id: str):
         self.conversation_state["thread_id"] = thread_id
-        logging.info(f"Thread ID set to {thread_id}")
+        logger.info(f"Thread ID set to {thread_id}")
 
     def set_username(self, username: str):
         """Sets the username for the conversation."""

@@ -1,12 +1,15 @@
 import wave
 from io import BytesIO
 import logging
+
 from wyoming.client import AsyncClient
 from wyoming.tts import Synthesize, SynthesizeVoice
 from wyoming.audio import AudioStart, AudioChunk, AudioStop
 from wyoming.event import Event
 
-async def synthesize_speech(text: str , voice: str) -> bytes:
+logger = logging.getLogger(__name__)
+
+async def synthesize_speech(text: str, voice: str) -> bytes:
     """
     Connects to a Wyoming TTS service using the wyoming library,
     sends text for synthesis, and saves the received audio to a WAV file.
@@ -15,7 +18,7 @@ async def synthesize_speech(text: str , voice: str) -> bytes:
 
     try:
         async with AsyncClient.from_uri(uri) as client:
-            logging.info("Connection to tts established.")
+            logger.info("Connection to tts established.")
 
             # 1. Send synthesize request
             synthesize_event = Synthesize(
@@ -23,7 +26,7 @@ async def synthesize_speech(text: str , voice: str) -> bytes:
                 voice=SynthesizeVoice(name=voice)
             )
             await client.write_event(synthesize_event.event())
-            logging.info(f"Sent synthesize request with voice: {voice} text: '{text}'")
+            logger.info(f"Sent synthesize request with voice: {voice} text: '{text}'")
 
             # 2. Prepare in-memory buffer for WAV data
             wav_buffer = BytesIO()
@@ -33,7 +36,7 @@ async def synthesize_speech(text: str , voice: str) -> bytes:
             while True:
                 event = await client.read_event()
                 if event is None:
-                    logging.info("TTS Connection closed by server.")
+                    logger.info("TTS Connection closed by server.")
                     break
 
                 if AudioStart.is_type(event.type):
@@ -43,7 +46,7 @@ async def synthesize_speech(text: str , voice: str) -> bytes:
                     wav_writer.setnchannels(start_event.channels)
                     wav_writer.setsampwidth(start_event.width)
                     wav_writer.setframerate(start_event.rate)
-                    logging.info(
+                    logger.info(
                         f"Audio stream started with params: rate={start_event.rate}, "
                         "width={start_event.width}, channels={start_event.channels}"
                     )
@@ -55,7 +58,7 @@ async def synthesize_speech(text: str , voice: str) -> bytes:
                         audio_received = True
 
                 elif AudioStop.is_type(event.type):
-                    logging.info("Audio stream finished.")
+                    logger.info("Audio stream finished.")
                     break
 
                 elif Event.is_type(event.type, "error"):
@@ -69,7 +72,7 @@ async def synthesize_speech(text: str , voice: str) -> bytes:
                 # Return the complete WAV data from the buffer
                 return wav_buffer.getvalue()
             else:
-                logging.info("No audio data was received.")
+                logger.info("No audio data was received.")
                 return None
     except ConnectionRefusedError:
         logging.error(f"Connection to {uri} refused. Is the service running?")

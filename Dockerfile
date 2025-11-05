@@ -9,12 +9,15 @@ ENV PYTHONUNBUFFERED 1
 # Install dependencies````
 RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
 
-# Set the working directory inside the container.
+# Create a non-root user AND the app directory in one layer
+RUN groupadd --gid 1000 appuser && \
+    useradd --uid 1000 --gid 1000 --shell /bin/bash --create-home appuser && \
+    mkdir /app && \
+    chown appuser:appuser /app
+
+# Set the working directory
 WORKDIR /app
 
-# Create a non-root user for improved security
-RUN groupadd --gid 1000 appuser && \
-    useradd --uid 1000 --gid 1000 --shell /bin/bash --create-home appuser
 
 # ---- Builder Stage ----
 # This stage pre-installs dependencies and caches them for faster builds
@@ -45,16 +48,23 @@ COPY --from=builder --chown=appuser:appuser /opt/venv/lib/python${PYTHON_VERSION
 
 # Copy the application source code after installing dependencies to improve caching
 COPY --chown=appuser:appuser src/ ./src
+COPY --chown=appuser:appuser pyproject.toml .
+COPY --chown=appuser:appuser requirements.txt .
+COPY --chown=appuser:appuser log_config.json .
 
 # Switch to the non-root user
 USER appuser
+
+# Run a REGULAR (non-editable) install
+# This builds your project from pyproject.toml and installs it.
+RUN pip install --user --no-cache-dir .
 
 ENV UVICORN_PORT="80" \
     UVICORN_HOST="0.0.0.0" \
     LOG_LEVEL=${ASSISTANT_LOG_LEVEL:-info}
 
 # Set the command to run the FastAPI application with Uvicorn
-CMD ["python", "-m", "uvicorn", "src.main:app", "--log-config", "src/log_config.json"]
+CMD ["python", "-m", "uvicorn", "max_assistant.main:app", "--log-config", "log_config.json"]
 
 # ---- Development Stage ----
 # This stage is for local development with mounted source code
@@ -78,4 +88,4 @@ ENV LOG_LEVEL="${ASSISTANT_LOG_LEVEL:-info}" \
 # Keep the container running to allow for IDE attachment and interactive use
 #CMD ["sleep", "infinity"]
 # Run the container in reload mode for live coding
-CMD ["python", "-m", "uvicorn", "src.main:app", "--reload-dir", "/app/src", "--reload-exclude", "*__pycache__*"]
+CMD ["python", "-m", "uvicorn", "max_assistant.main:app", "--reload-dir", "/app/src", "--reload-exclude", "*__pycache__*"]
