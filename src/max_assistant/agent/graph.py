@@ -23,7 +23,7 @@ from langgraph.prebuilt import ToolNode
 
 from max_assistant.agent.prompts import senior_assistant_prompt
 from max_assistant.agent.state import GraphState
-from max_assistant.api.ollama_preloader import warm_up_ollama_async
+from max_assistant.clients.ollama_preloader import warm_up_ollama_async
 from max_assistant.clients.neo4j_client import Neo4jClient
 from max_assistant.clients import neo4j_client as neo4j_client_module
 from max_assistant.tools.schedule_tools import (

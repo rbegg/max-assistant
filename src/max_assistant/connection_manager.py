@@ -22,8 +22,8 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 from max_assistant.agent.agent import Agent
 from max_assistant.config import QUEUE_GET_TIMEOUT
-from max_assistant.api.stt_service import transcript_generator
-from max_assistant.api.tts_service import synthesize_speech
+from max_assistant.clients.stt_client import STTClient
+from max_assistant.clients.tts_client import TTSClient
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +34,8 @@ class ConnectionManager:
     def __init__(self, reasoning_engine, websocket: WebSocket):
         self.ws = websocket
         self.agent = Agent(reasoning_engine)
+        self.stt_client = STTClient()
+        self.tts_client = TTSClient()
         # Each connection gets its own set of queues
         self.binary_input_queue = Queue()
         self.text_input_queue = Queue()
@@ -43,6 +45,10 @@ class ConnectionManager:
     async def handle_connection(self):
         """Manages all tasks for a single client connection."""
         logger.info("Handling new client connection.")
+        # Fire-and-forget pre-warming of the TTS connection.
+        # This task is not a primary loop, so its completion should not tear down the connection.
+        asyncio.create_task(self.tts_client.connect())
+
         tasks = [
             asyncio.create_task(self._agent_loop()),
             asyncio.create_task(self._text_input_handler_loop()),
@@ -61,6 +67,7 @@ class ConnectionManager:
                     logging.error(f"A connection task failed: {task.exception()}", exc_info=True)
         finally:
             self._shutdown_event.set()
+            await self.tts_client.close()
             for task in tasks:
                 if not task.done():
                     task.cancel()
@@ -125,7 +132,9 @@ class ConnectionManager:
     async def _agent_loop(self):
         """Handles STT, reasoning, and TTS for the connection."""
         try:
-            async for stt_message_str in transcript_generator(self.binary_input_queue):
+            async for stt_message_str in self.stt_client.transcript_generator(
+                self.binary_input_queue
+            ):
                 if self._shutdown_event.is_set():
                     break
                 try:
@@ -141,10 +150,12 @@ class ConnectionManager:
                     response_payload = {"data": llm_response, "source": "assistant"}
                     await self.client_output_queue.put(json.dumps(response_payload))
 
-                    output_audio = await synthesize_speech(llm_response,
-                                                           self.agent.get_voice())
-                    logger.info("Sending audio Response.")
-                    await self.client_output_queue.put(output_audio)
+                    output_audio = await self.tts_client.synthesize_speech(
+                        llm_response, self.agent.get_voice()
+                    )
+                    if output_audio:
+                        logger.info("Sending audio Response.")
+                        await self.client_output_queue.put(output_audio)
 
                 except (json.JSONDecodeError, AttributeError) as e:
                     logging.warning(f"Could not parse STT message: {stt_message_str} ({e})")

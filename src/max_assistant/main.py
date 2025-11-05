@@ -6,7 +6,7 @@ import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket
 from .config import PORT, LOG_LEVEL, LOG_FORMAT, HOST
-from max_assistant.api.connection_manager import ConnectionManager
+from max_assistant.connection_manager import ConnectionManager
 from max_assistant.agent.graph import create_reasoning_engine
 from max_assistant.clients.neo4j_client import Neo4jClient
 
