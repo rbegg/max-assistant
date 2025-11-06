@@ -1,4 +1,4 @@
-id,firstName,lastName,Title,startDate,endDate,phone,email,notes
+id,firstName,lastName,title,startDate,endDate,phone,email,notes
 81,Alan,Brown,Doctor,2020-01-01,,519-555-6001,alan.brown@clinic.com,Current family doctor.
 82,Evelyn,Reed,Doctor,1990-01-01,2019-12-1,519-555-6002,evelyn.reed@example.com,Former family doctor (retired).
 83,Kenji,Tanaka,Surgeon,2020-01-01,,519-555-6003,k.tanaka@ggh.on.ca,Orthopedic surgeon. Performed hip replacement in 2019.

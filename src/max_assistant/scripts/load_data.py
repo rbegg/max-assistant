@@ -1,6 +1,8 @@
 import csv
 import yaml
 import json
+from collections import defaultdict
+
 from neo4j import GraphDatabase
 from argparse import ArgumentParser
 
@@ -9,7 +11,7 @@ from max_assistant.scripts.local_config import SCRIPT_DIR
 from max_assistant.config import NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD
 
 # --- Configuration ---
-DATA_DIR = SCRIPT_DIR / "../../csv_data"
+DATA_DIR = SCRIPT_DIR / "../../../csv_data"
 NODE_CONFIG_FILE = DATA_DIR / "nodes.yaml"
 RELATIONSHIP_CONFIG_FILE = DATA_DIR / "relationships.yaml"
 
@@ -106,7 +108,7 @@ def process_relationships(driver, relationships):
             print(f"    No data found in {rel['name']}.❌")
 
 
-from collections import defaultdict
+
 
 
 def get_schema(driver):
@@ -142,20 +144,22 @@ def get_schema(driver):
         return None
 
     # --- Process Step 1: Build Node Property Lookup Map ---
-    # Use defaultdict for cleaner code
-    node_properties_map = defaultdict(list)
+    node_properties_map = defaultdict(set)
     for row in node_props_data:
-        # The row['nodeLabels'] is a list, get the primary one
+        prop_name = row['propertyName']
+        # REFACTORED: Iterate over ALL labels for this property, not just [0]
         if row['nodeLabels']:
-            label = row['nodeLabels'][0]
-            node_properties_map[label].append(row['propertyName'])
+            for label in row['nodeLabels']:
+                node_properties_map[label].add(prop_name)
 
     # --- Process Step 2: Build Relationship Property Lookup Map ---
-    rel_properties_map = defaultdict(list)
+    rel_properties_map = defaultdict(set)
     for row in rel_props_data:
         # relType is a string like '`KNOWS`', so we strip the backticks
         rel_type = row['relType'].strip('`')
-        rel_properties_map[rel_type].append(row['propertyName'])
+        prop_name = row['propertyName']
+        # REFACTORED: Use .add() instead of .append()
+        rel_properties_map[rel_type].add(prop_name)
 
     # --- Process Step 3: Build Schema Strings using Lookups ---
     node_labels_set = set()
@@ -170,8 +174,8 @@ def get_schema(driver):
         label = list(node.labels)[0]
         node_labels_set.add(label)
 
-        # Use our new lookup map to get the *real* properties
-        properties = sorted(node_properties_map.get(label, []))
+        properties_set = node_properties_map.get(label, set())
+        properties = sorted(list(properties_set))
         node_schema_strings.append(f"{label} {{properties: {properties}}}")
 
     # Use the visualization record for relationship structure
@@ -183,7 +187,9 @@ def get_schema(driver):
         end_label = list(rel.end_node.labels)[0]
 
         # Use our new lookup map to get the *real* properties
-        properties = sorted(rel_properties_map.get(rel_type, []))
+        # REFACTORED: Get the set, convert to list, then sort
+        properties_set = rel_properties_map.get(rel_type, set())
+        properties = sorted(list(properties_set))
         rel_schema_strings.append(
             f"({start_label})-[:{rel_type} {{properties: {properties}}}]->({end_label})"
         )

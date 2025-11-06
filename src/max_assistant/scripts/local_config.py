@@ -7,7 +7,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
-local_env_file = SCRIPT_DIR / '../../.env.local'
+local_env_file = SCRIPT_DIR / '../../../.env.local'
 if not load_dotenv(local_env_file):
     print(f"Failed to load environment variables from {local_env_file}.")
     exit(1)

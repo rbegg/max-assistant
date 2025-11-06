@@ -64,9 +64,10 @@
   filename: "support_persons.csv"
   query: |
     UNWIND $data AS row
-    MERGE (p:Person:Friend {id: toInteger(row.id)})
+    MERGE (p:Person:Support {id: toInteger(row.id)})
     SET p.firstName = row.firstName, 
         p.lastName = row.lastName, 
+        p.title = row.title,  
         p.startDate = CASE WHEN row.startDate IS NOT NULL AND row.startDate <> '' THEN date(row.startDate) ELSE null END,
         p.endDate = CASE WHEN row.endDate IS NOT NULL AND row.endDate <> '' THEN date(row.endDate) ELSE null END,
         p.phone = row.phone,

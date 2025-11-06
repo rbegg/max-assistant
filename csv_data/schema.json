@@ -8,6 +8,7 @@
         "Location",
         "Month",
         "Person",
+        "Support",
         "User",
         "Year"
     ],
@@ -22,18 +23,20 @@
         "LIVES_WITH",
         "MARRIED_TO",
         "PARENT_OF",
-        "PARTNER_OF"
+        "PARTNER_OF",
+        "SUPPORTED_BY"
     ],
     "schema": [
         "Appointment {properties: ['date', 'details', 'duration', 'id', 'time', 'title']}",
         "DailyRoutine {properties: ['dayOfWeek', 'details', 'duration', 'id', 'rating', 'room', 'startDate', 'time', 'title', 'type']}",
         "Day {properties: ['day', 'month', 'year']}",
         "Family {properties: ['dob', 'dod', 'email', 'firstName', 'gender', 'id', 'lastName', 'notes', 'phone']}",
-        "Friend {properties: ['dob', 'email', 'endDate', 'firstName', 'gender', 'id', 'lastName', 'notes', 'phone', 'startDate']}",
+        "Friend {properties: ['dob', 'email', 'firstName', 'gender', 'id', 'lastName', 'notes', 'phone']}",
         "Location {properties: ['address', 'id', 'name', 'room', 'type']}",
         "Month {properties: ['month', 'name', 'year']}",
-        "Person {properties: ['dob', 'dob', 'dod', 'email', 'email', 'firstName', 'firstName', 'gender', 'gender', 'id', 'id', 'lastName', 'lastName', 'notes', 'notes', 'phone']}",
-        "User {properties: []}",
+        "Person {properties: ['dob', 'dod', 'email', 'endDate', 'firstName', 'gender', 'id', 'lastName', 'notes', 'phone', 'startDate', 'title']}",
+        "Support {properties: ['email', 'endDate', 'firstName', 'id', 'lastName', 'notes', 'phone', 'startDate', 'title']}",
+        "User {properties: ['dob', 'email', 'firstName', 'gender', 'id', 'lastName', 'notes', 'phone']}",
         "Year {properties: ['year']}",
         "(Day)-[:HAS_APPOINTMENT {properties: []}]->(Appointment)",
         "(Family)-[:LIVES_AT {properties: []}]->(Location)",
@@ -69,6 +72,8 @@
         "(Person)-[:PARENT_OF {properties: []}]->(User)",
         "(Person)-[:PARTNER_OF {properties: []}]->(Family)",
         "(Person)-[:PARTNER_OF {properties: []}]->(Person)",
+        "(Person)-[:SUPPORTED_BY {properties: []}]->(Person)",
+        "(Person)-[:SUPPORTED_BY {properties: []}]->(Support)",
         "(User)-[:ATTENDS {properties: []}]->(DailyRoutine)",
         "(User)-[:FRIEND_OF {properties: []}]->(Friend)",
         "(User)-[:FRIEND_OF {properties: []}]->(Person)",
@@ -79,6 +84,8 @@
         "(User)-[:PARENT_OF {properties: []}]->(Family)",
         "(User)-[:PARENT_OF {properties: []}]->(Person)",
         "(User)-[:PARENT_OF {properties: []}]->(User)",
+        "(User)-[:SUPPORTED_BY {properties: []}]->(Person)",
+        "(User)-[:SUPPORTED_BY {properties: []}]->(Support)",
         "(Year)-[:HAS_MONTH {properties: []}]->(Month)"
     ]
 }
