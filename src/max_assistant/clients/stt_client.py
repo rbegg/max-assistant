@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from websockets.client import connect as websocket_connect
+from websockets.asyncio.client import connect as websocket_connect
 from websockets.exceptions import ConnectionClosed
 from max_assistant.config import STT_WEBSOCKET_URL
 
