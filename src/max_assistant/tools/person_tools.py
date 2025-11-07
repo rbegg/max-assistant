@@ -15,8 +15,10 @@ from max_assistant.models.person_models import (
     PersonDetails,
     FindPersonByNameArgs,
     FindPersonByTitleArgs,
-    GetRelationshipArgs
+    GetRelationshipArgs,
+    GetUserInfoArgs
 )
+from max_assistant.models.location_models import LocationDetails
 
 logger = logging.getLogger(__name__)
 
@@ -254,14 +256,81 @@ class PersonTools:
         logger.info("No relationship path found.")
         return json.dumps({"error": "No relationship found", "details": "No relationship path was found in the graph."})
 
+
+    async def get_user_info_internal(self) -> Dict[str, Any]:
+        """
+        Internal method to fetch user and location info.
+        Returns a dictionary, not a JSON string.
+        """
+        logger.info("Tool: get_user_info_internal")
+
+        query = """
+            MATCH (u:User)
+            OPTIONAL MATCH (u)-[:LIVES_AT]->(l:Location)
+            RETURN properties(u) AS user, properties(l) AS location
+            LIMIT 1
+            """
+
+        result = await self.client.execute_query(query, {})
+
+        if "error" in result:
+            return result  # Return the error dict
+
+        if not result.get("data"):
+            return {"error": "User not found", "details": "No :User node was found in the graph."}
+
+        try:
+            data = result["data"][0]
+            user_props = data.get("user")
+            location_props = data.get("location")
+
+            if not user_props:
+                return {"error": "Data parsing failed", "details": "Found a user relationship but no user properties."}
+
+            # Validate the user properties. PersonDetails is compatible.
+            validated_user = PersonDetails.model_validate(user_props)
+
+            validated_location = None
+            if location_props:
+                # Validate location properties if they exist
+                validated_location = LocationDetails.model_validate(location_props)
+
+            # Build the final JSON output
+            output = {
+                "user": validated_user.model_dump(mode='json'),
+                "location": validated_location.model_dump(mode='json') if validated_location else None
+            }
+
+            return output  # <-- RETURN DICT
+
+        except ValidationError as e:
+            logger.error(f"Validation error for User/Location: {e.errors()}")
+            return {"error": "Data validation failed", "details": e.errors()}
+        except Exception as e:
+            logger.error(f"Unexpected error in get_user_info: {e}")
+            return {"error": "Data parsing failed", "details": str(e)}
+
+
+    async def get_user_info(self) -> str:
+        """
+        Fetches the primary User node and their LIVES_AT location.
+        It takes no arguments and assumes a single User node in the graph.
+        Returns the user's properties and their location's properties as a JSON string.
+        """
+        # This tool-facing method now calls the internal one
+        # and dumps the result to a JSON string, as expected by the LLM.
+        output_dict = await self.get_user_info_internal()
+        return json.dumps(output_dict, indent=2, default=str)
+
+
     def get_tools(self) -> list:
         """
         Returns a list of all tool methods bound to this instance.
         """
         return [
             StructuredTool.from_function(
-                func=None,  # <-- No synchronous function
-                coroutine=self.find_person_by_name,  # <-- Pass async method here
+                func=None,
+                coroutine=self.find_person_by_name,
                 name="find_person_by_name",
                 description=self.find_person_by_name.__doc__,
                 args_schema=FindPersonByNameArgs
@@ -279,5 +348,12 @@ class PersonTools:
                 name="get_relationship_to_user",
                 description=self.get_relationship_to_user.__doc__,
                 args_schema=GetRelationshipArgs
-            )
+            ),
+            StructuredTool.from_function(
+                func=None,
+                coroutine=self.get_user_info,
+                name="get_user_info",
+                description=self.get_user_info.__doc__,
+                args_schema=GetUserInfoArgs
+            ),
         ]

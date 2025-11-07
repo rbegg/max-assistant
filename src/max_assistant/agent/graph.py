@@ -24,7 +24,6 @@ from langchain_ollama import ChatOllama
 
 from max_assistant.agent.prompts import senior_assistant_prompt
 from max_assistant.agent.state import GraphState
-from max_assistant.clients.neo4j_client import Neo4jClient
 from max_assistant.tools.schedule_tools import ScheduleTools
 from max_assistant.tools.person_tools import PersonTools
 from max_assistant.tools.time_tools import get_current_datetime
@@ -47,22 +46,17 @@ def prune_messages(state: GraphState):
     return {}
 
 
-async def initialize_all_tools(db_client: Neo4jClient) -> List[BaseTool]:
+async def initialize_all_tools(person_tools: PersonTools, schedule_tools: ScheduleTools) -> List[BaseTool]:
     """
     Instantiates all tool services and returns a single, flat list of tools.
     This keeps the graph-building logic clean.
     """
     logger.info("Initializing tool services...")
 
-    # Instantiate all class-based tool services
-    # (Assuming you refactored ScheduleTools like PersonTools)
-    schedule_tool_service = ScheduleTools(client=db_client)
-    person_tool_service = PersonTools(client=db_client)
-
     # Get the lists of bound methods
     all_tools: List[BaseTool] = []
-    all_tools.extend(schedule_tool_service.get_tools())
-    all_tools.extend(person_tool_service.get_tools())
+    all_tools.extend(schedule_tools.get_tools())
+    all_tools.extend(person_tools.get_tools())
 
     # Add any standalone tools
     all_tools.extend([get_current_datetime])
@@ -72,11 +66,11 @@ async def initialize_all_tools(db_client: Neo4jClient) -> List[BaseTool]:
 
 
 # --- Build the Graph ---
-async def create_reasoning_engine(db_client: Neo4jClient, llm: ChatOllama ):
+async def create_reasoning_engine(llm: ChatOllama, person_tools: PersonTools, schedule_tools: ScheduleTools ):
     """Builds the graph with pruning, model calls, and tool execution."""
 
     # 1. Initialize Tools
-    tools = await initialize_all_tools(db_client)
+    tools = await initialize_all_tools(person_tools, schedule_tools)
     llm_with_tools = llm.bind_tools(tools)
 
     # 2. Define Nodes that will be part of the graph
@@ -105,8 +99,7 @@ async def create_reasoning_engine(db_client: Neo4jClient, llm: ChatOllama ):
 
         # The 'messages' in the state now contains the user's latest input.
         response = await chain.ainvoke({
-            "user_name": state["username"],
-            "location": "Not available",
+            "user_info": state["userinfo"],
             "current_datetime": current_datetime(),
             "messages": state["messages"],
         })

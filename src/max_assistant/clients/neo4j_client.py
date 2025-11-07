@@ -125,6 +125,3 @@ class Neo4jClient:
         except Exception as e:
             return {"error": e.__class__.__name__, "message": str(e)}
 
-
-# Global client instance, will be initialized in the main graph entrypoint
-#client: "Neo4jClient" = None

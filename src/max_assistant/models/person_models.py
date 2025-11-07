@@ -61,3 +61,7 @@ class GetRelationshipArgs(BaseModel):
     """Input arguments for the get_relationship_to_user tool."""
     first_name: str = Field(..., description="The person's first name.")
     last_name: str = Field(..., description="The person's last name.")
+
+class GetUserInfoArgs(BaseModel):
+    """Arguments for get_user_info tool. Takes no input."""
+    pass

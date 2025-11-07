@@ -24,6 +24,7 @@ from max_assistant.agent.agent import Agent
 from max_assistant.config import QUEUE_GET_TIMEOUT
 from max_assistant.clients.stt_client import STTClient
 from max_assistant.clients.tts_client import TTSClient
+from max_assistant.tools.person_tools import PersonTools
 
 logger = logging.getLogger(__name__)
 
@@ -31,9 +32,9 @@ logger = logging.getLogger(__name__)
 class ConnectionManager:
     """Manages the state and logic for a single client WebSocket connection."""
 
-    def __init__(self, reasoning_engine, websocket: WebSocket):
+    def __init__(self, reasoning_engine, person_tools: PersonTools, websocket: WebSocket):
         self.ws = websocket
-        self.agent = Agent(reasoning_engine)
+        self.agent = Agent(reasoning_engine, person_tools)
         self.stt_client = STTClient()
         self.tts_client = TTSClient()
         # Each connection gets its own set of queues
@@ -45,8 +46,10 @@ class ConnectionManager:
     async def handle_connection(self):
         """Manages all tasks for a single client connection."""
         logger.info("Handling new client connection.")
+
+        await self.agent.initialize_session()
+
         # Fire-and-forget pre-warming of the TTS connection.
-        # This task is not a primary loop, so its completion should not tear down the connection.
         asyncio.create_task(self.tts_client.connect())
 
         tasks = [
@@ -118,7 +121,7 @@ class ConnectionManager:
                 logger.info(f"TEXT_HANDLER: Received text from client: {text_data}")
                 client_dict = json.loads(text_data)
                 if "username" in client_dict:
-                    self.agent.set_username(client_dict["username"])
+                    logger.info(f"username sent: {client_dict['username']}")
                 if "voice" in client_dict:
                     self.agent.set_voice(client_dict["voice"])
             except asyncio.TimeoutError:
