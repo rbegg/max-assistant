@@ -10,7 +10,6 @@ import argparse
 import os
 
 
-
 # Load environment variables for text client env
 from dotenv import load_dotenv
 
@@ -19,10 +18,8 @@ if not load_dotenv('../.env.local'):
     exit(1)
 
 from max_assistant.config import LOG_LEVEL
+from max_assistant.app_services import AppServices
 from max_assistant.agent.agent import Agent
-from max_assistant.agent.graph import create_reasoning_engine
-
-
 
 
 async def main(log_path=None):
@@ -44,20 +41,20 @@ async def main(log_path=None):
                             filename=log_filename,
                             filemode='w')
 
-    print("Initializing the reasoning engine...")
-    reasoning_engine = await create_reasoning_engine()
-    if not reasoning_engine:
-        print("Failed to initialize reasoning engine. Exiting.")
-        return
+    person_tools = None
+    schedule_tools = None
+    print("Application startup...")
 
-    agent = Agent(reasoning_engine)
+    try:
+        app_services = await AppServices.create()
+        print("Application services successfully initialized.")
 
-    username = ""
-    while not username:
-        username = await asyncio.to_thread(input, "Please enter your username: ")
-        if not username:
-            print("Username cannot be empty. Please try again.")
-    agent.set_username(username)
+    except Exception as e:
+        print(f"Failed to initialize application: {e}")
+        raise e
+
+    agent = Agent(app_services.reasoning_engine, app_services.person_tools)
+    await agent.initialize_session()
 
     print("Agent is ready. Type 'exit' to quit.")
 

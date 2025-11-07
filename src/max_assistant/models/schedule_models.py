@@ -8,33 +8,9 @@ from typing import List, Optional, Any, Dict
 from datetime import datetime, date, time
 import logging
 
+from max_assistant.models.base import BaseNeo4jModel
+
 logger = logging.getLogger(__name__)
-
-
-class BaseNeo4jModel(BaseModel):
-    """
-    A base model that handles common Neo4j data conversions.
-    - Coerces integer IDs to strings.
-    - Converts neo4j.time.Time/Date objects to native Python types.
-    """
-    model_config = ConfigDict(
-        from_attributes=True,
-        coerce_numbers_to_str=True,  # Fixes id: int -> str globally
-    )
-
-    @model_validator(mode='before')
-    @classmethod
-    def _convert_neo4j_types(cls, data: Any) -> Any:
-        """
-        Runs before any other validation.
-        Iterates over the input dict and converts Neo4j types.
-        """
-        if isinstance(data, dict):
-            for key, value in data.items():
-                if hasattr(value, 'to_native'):
-                    # This converts neo4j.time.Time/Date to datetime.time/date
-                    data[key] = value.to_native()
-        return data
 
 
 class Appointment(BaseNeo4jModel):  # <-- Inherits from our base model

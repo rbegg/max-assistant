@@ -14,23 +14,20 @@ chat applications or AI-powered assistants.
 """
 
 import logging
-from typing import Literal
+from typing import Literal, List
 
 from langchain_core.messages import HumanMessage, ToolMessage
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
-
+from langchain_core.tools import BaseTool
+from langchain_ollama import ChatOllama
 
 from max_assistant.agent.prompts import senior_assistant_prompt
 from max_assistant.agent.state import GraphState
-from max_assistant.clients.ollama_preloader import warm_up_ollama_async
-from max_assistant.clients.neo4j_client import Neo4jClient
-from max_assistant.clients import neo4j_client as neo4j_client_module
-from max_assistant.tools.schedule_tools import (
-    get_full_schedule, get_appointments_for_date, get_routines_for_date, get_activities_info )
+from max_assistant.tools.schedule_tools import ScheduleTools
+from max_assistant.tools.person_tools import PersonTools
 from max_assistant.tools.time_tools import get_current_datetime
-from max_assistant.config import OLLAMA_MODEL_NAME, OLLAMA_BASE_URL, MESSAGE_PRUNING_LIMIT
-from max_assistant.config import NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD
+from max_assistant.config import MESSAGE_PRUNING_LIMIT
 from max_assistant.utils.datetime_utils import current_datetime
 
 logger = logging.getLogger(__name__)
@@ -49,26 +46,31 @@ def prune_messages(state: GraphState):
     return {}
 
 
+async def initialize_all_tools(person_tools: PersonTools, schedule_tools: ScheduleTools) -> List[BaseTool]:
+    """
+    Instantiates all tool services and returns a single, flat list of tools.
+    This keeps the graph-building logic clean.
+    """
+    logger.info("Initializing tool services...")
+
+    # Get the lists of bound methods
+    all_tools: List[BaseTool] = []
+    all_tools.extend(schedule_tools.get_tools())
+    all_tools.extend(person_tools.get_tools())
+
+    # Add any standalone tools
+    all_tools.extend([get_current_datetime])
+
+    logger.info(f"Successfully initialized {len(all_tools)} tools.")
+    return all_tools
+
+
 # --- Build the Graph ---
-async def create_reasoning_engine():
+async def create_reasoning_engine(llm: ChatOllama, person_tools: PersonTools, schedule_tools: ScheduleTools ):
     """Builds the graph with pruning, model calls, and tool execution."""
 
-
-    logger.info(f"Ollama Base URL = {OLLAMA_BASE_URL} model = {OLLAMA_MODEL_NAME}")
-
-    # 1. Initialize LLM and Tools
-    llm = await warm_up_ollama_async(OLLAMA_MODEL_NAME, OLLAMA_BASE_URL, temperature=0)
-    if not llm:
-        raise RuntimeError("Failed to initialize the LLM.")
-
-    neo4j_client_module.client = await Neo4jClient.create(NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD)
-    if not neo4j_client_module.client:
-        raise RuntimeError("Failed to initialize the Neo4j client.")
-
-    # 1.4. Create the final tools list from the corrected objects
-    tools = [get_full_schedule, get_appointments_for_date, get_routines_for_date, get_activities_info, get_current_datetime]
-
-    # 1.55. Bind the tools
+    # 1. Initialize Tools
+    tools = await initialize_all_tools(person_tools, schedule_tools)
     llm_with_tools = llm.bind_tools(tools)
 
     # 2. Define Nodes that will be part of the graph
@@ -97,8 +99,7 @@ async def create_reasoning_engine():
 
         # The 'messages' in the state now contains the user's latest input.
         response = await chain.ainvoke({
-            "user_name": state["username"],
-            "location": "Not available",
+            "user_info": state["userinfo"],
             "current_datetime": current_datetime(),
             "messages": state["messages"],
         })

@@ -18,7 +18,7 @@ class GraphState(TypedDict):
         messages: The full conversation history, which will be pruned.
     """
     transcribed_text: str
-    username: str
+    userinfo: dict
     thread_id: str
     messages: Annotated[list[BaseMessage], operator.add]
     voice: str

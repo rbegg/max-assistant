@@ -94,7 +94,7 @@ class TTSClient:
                     elif AudioStop.is_type(event.type):
                         logger.info("Audio stream finished.")
                         break
-                    elif Event.is_type(event.type, "error"):
+                    elif Event.is_type(event.type, "error"): # noinspection PyUnresolvedReferences
                         logging.error(f"Received error from server: {event.data.get('text')}")
                         break
 

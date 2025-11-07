@@ -2,7 +2,10 @@ import time
 import httpx
 import asyncio
 import logging
+from typing import Union
+
 from langchain_ollama import ChatOllama
+from langchain_core.runnables import RunnableConfig
 from langchain_core.output_parsers import StrOutputParser
 
 logger = logging.getLogger(__name__)
@@ -14,7 +17,7 @@ async def warm_up_ollama_async(
         keep_alive: str = "-1",
         max_retries: int = 10,
         retry_delay: int = 2
-) -> ChatOllama | None:
+) -> Union["ChatOllama", None]:
     """
     Asynchronously initializes and preloads a model in Ollama with retry logic.
     """
@@ -41,7 +44,7 @@ async def warm_up_ollama_async(
 
             await chain.ainvoke(
                 "Hi",
-                config={"configurable": {"keep_alive": keep_alive}}
+                config=RunnableConfig(configurable={"keep_alive": keep_alive})
             )
 
             end_time = time.monotonic()

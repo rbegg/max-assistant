@@ -3,16 +3,22 @@ import os
 import uvicorn
 import asyncio
 import logging
+import logging.config
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket
-from .config import PORT, LOG_LEVEL, LOG_FORMAT, HOST
-from max_assistant.connection_manager import ConnectionManager
-from max_assistant.agent.graph import create_reasoning_engine
-from max_assistant.clients.neo4j_client import Neo4jClient
 
-# Compiled reasoning engine.
-reasoning_engine = None
-reasoning_engine_preload_task = None
+from max_assistant.config import (
+    PORT, HOST,
+    NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD,
+    OLLAMA_MODEL_NAME, OLLAMA_BASE_URL
+)
+
+from max_assistant.app_services import AppServices
+from max_assistant.connection_manager import ConnectionManager
+
+logger = logging.getLogger(__name__)
+
+app_services: AppServices = None
 
 
 def setup_logging(config_path='log_config.json'):
@@ -43,21 +49,30 @@ setup_logging()
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(_: FastAPI):
     """
     Manages the application's startup logic.
     """
-    global reasoning_engine_preload_task
-    logging.info("Application startup...")
+    global app_services
+    logger.info("Application startup...")
 
-    logging.info("Initializing the reasoning engine...")
-    reasoning_engine_preload_task = asyncio.create_task(create_reasoning_engine())
+    try:
+        app_services = await AppServices.create()
+        logger.info("Application services successfully initialized.")
+
+    except Exception as e:
+        logger.critical(f"Failed to initialize application: {e}", exc_info=True)
+        # This will prevent the app from starting if init fails
+        raise e
+
 
     yield
 
-    logging.info("Closing Neo4j client connection...")
-    await Neo4jClient.close()
-    logging.info("Application shutdown.")
+    # Shutdown logic: This code runs after the server is stopped
+    logger.info("Closing Neo4j client connection...")
+    if app_services and app_services.db_client:
+        await app_services.db_client.close()
+    logger.info("Application shutdown complete.")
 
 
 app = FastAPI(lifespan=lifespan)
@@ -74,25 +89,29 @@ def health_check():
 @app.websocket("/ws")
 async def websocket_endpoint(client_ws: WebSocket):
     await client_ws.accept()
-    logging.info("Client connected.")
+    logger.info("Client connected.")
 
-    global reasoning_engine
-    if not reasoning_engine:
-        logging.info("Waiting for reasoning engine to be ready...")
-        reasoning_engine = await reasoning_engine_preload_task
-        if not reasoning_engine:
-            logging.error("Reasoning engine not available.")
-            await client_ws.close(code=1011, reason="Server error: Reasoning engine not initialized.")
-            return
-        logging.info("Reasoning engine is ready.")
+    global app_services
 
-    manager = ConnectionManager(reasoning_engine, client_ws)
+    if not app_services or not app_services.reasoning_engine:
+        logger.error("Server not fully initialized: missing services.")
+        await client_ws.close(code=1011, reason="Server error: Not initialized.")
+        return
+    logger.info("Reasoning engine and services are ready.")
+
+    # --- Pass the correct services from the container ---
+    # This also fixes the P0 bug of passing the wrong arguments
+    manager = ConnectionManager(
+        app_services.reasoning_engine,
+        app_services.person_tools,
+        client_ws
+    )
     try:
         await manager.handle_connection()
     except Exception as e:
-        logging.error(f"Connection handler failed: {e}", exc_info=True)
+        logger.error(f"Connection handler failed: {e}", exc_info=True)
     finally:
-        logging.info("Client connection handler finished.")
+        logger.info("Client connection handler finished.")
 
 
 if __name__ == "__main__":
