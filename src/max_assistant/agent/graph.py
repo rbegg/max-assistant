@@ -25,6 +25,7 @@ from langchain_core.language_models import BaseChatModel
 
 from max_assistant.agent.prompts import senior_assistant_prompt
 from max_assistant.agent.state import GraphState
+from max_assistant.tools.family_tools import FamilyTools
 from max_assistant.tools.schedule_tools import ScheduleTools
 from max_assistant.tools.person_tools import PersonTools
 from max_assistant.tools.general_query_tools import GeneralQueryTools
@@ -51,6 +52,7 @@ def prune_messages(state: GraphState):
 async def initialize_all_tools(
         llm: BaseChatModel,
         person_tools: PersonTools,
+        family_tools: FamilyTools,
         schedule_tools: ScheduleTools
 ) -> List[BaseTool]:
     """
@@ -70,6 +72,7 @@ async def initialize_all_tools(
     all_tools.extend(schedule_tools.get_tools())
     all_tools.extend(person_tools.get_tools())
     all_tools.extend(general_tools.get_tools())
+    all_tools.extend(family_tools.get_tools())
 
     # Add any standalone tools
     all_tools.extend([get_current_datetime])
@@ -79,11 +82,15 @@ async def initialize_all_tools(
 
 
 # --- Build the Graph ---
-async def create_reasoning_engine(llm: ChatOllama, person_tools: PersonTools, schedule_tools: ScheduleTools ):
+async def create_reasoning_engine(
+        llm: ChatOllama,
+        person_tools: PersonTools,
+        family_tools: FamilyTools,
+        schedule_tools: ScheduleTools ):
     """Builds the graph with pruning, model calls, and tool execution."""
 
     # 1. Initialize Tools
-    tools = await initialize_all_tools(llm, person_tools, schedule_tools)
+    tools = await initialize_all_tools(llm, person_tools, family_tools, schedule_tools)
     llm_with_tools = llm.bind_tools(tools)
 
     # 2. Define Nodes that will be part of the graph

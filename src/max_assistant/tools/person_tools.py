@@ -100,7 +100,6 @@ class PersonTools:
         if not first_name and not last_name:
             return json.dumps({"error": "Search failed", "details": "You must provide at least a first or last name."})
 
-        # --- MODIFIED: Use toLower() for case-insensitivity ---
         query = """
             MATCH (p:Person|Family|Friend|Support)
             WHERE ($first_name IS NULL OR toLower(p.firstName) CONTAINS $first_name)
@@ -108,7 +107,6 @@ class PersonTools:
             RETURN properties(p) AS person, labels(p) as labels
             LIMIT 10
             """
-        # --- MODIFIED: Lowercase params before sending to DB ---
         params = {
             "first_name": first_name.lower() if first_name else None,
             "last_name": last_name.lower() if last_name else None
@@ -207,11 +205,12 @@ class PersonTools:
 
     async def get_relationship_to_user(self, first_name: str, last_name: str) -> str:
         """
-        Given a person's full name, returns a simple description of their
-        relationship to the user (e.g., 'husband', 'daughter', 'friend', 'doctor').
-        Only call this tool if the user provides a name, otherwise use the general query tool.
-        This is case-insensitive. It prioritizes family connections.
+        Use this tool ONLY when the user provides a full name and asks
+        for their relationship (e.g., "Who is Jane Doe?").
+        It returns a description of their relationship to the user (e.g., 'friend', 'doctor').
 
+        DO NOT use this tool for general questions like 'who is my husband' or 'who are my parents'.
+        Use the specific family_tools (like get_my_spouse) for those queries.
         """
         logger.info(f"Tool: get_relationship_to_user for {first_name} {last_name}")
         params = {

@@ -17,6 +17,7 @@ from max_assistant.config import (
 from max_assistant.clients.neo4j_client import Neo4jClient
 from max_assistant.clients.ollama_preloader import warm_up_ollama_async
 from max_assistant.tools.person_tools import PersonTools
+from max_assistant.tools.family_tools import FamilyTools
 from max_assistant.tools.schedule_tools import ScheduleTools
 from max_assistant.agent.graph import create_reasoning_engine
 
@@ -34,12 +35,14 @@ class AppServices:
             db_client: Neo4jClient,
             llm: ChatOllama,
             person_tools: PersonTools,
+            family_tools: FamilyTools,
             schedule_tools: ScheduleTools,
             reasoning_engine: Any  # This is the compiled StateGraph
     ):
         self.db_client = db_client
         self.llm = llm
         self.person_tools = person_tools
+        self.family_tools = family_tools
         self.schedule_tools = schedule_tools
         self.reasoning_engine = reasoning_engine
 
@@ -78,13 +81,14 @@ class AppServices:
             # 3. Create Tool Services
             logger.info("Initializing tool services...")
             person_tools = PersonTools(db_client)
+            family_tools = FamilyTools(client=db_client)
             schedule_tools = ScheduleTools(client=db_client)
             logger.info("Tool services initialized.")
 
             # 4. Create Reasoning Engine
             logger.info("Initializing the reasoning engine...")
             # This now passes the correct arguments, fixing the P0 bug
-            reasoning_engine = await create_reasoning_engine(llm, person_tools, schedule_tools)
+            reasoning_engine = await create_reasoning_engine(llm, person_tools, family_tools, schedule_tools)
             logger.info("Reasoning engine initialized.")
 
             # 5. Create and return the container instance
@@ -92,6 +96,7 @@ class AppServices:
                 db_client=db_client,
                 llm=llm,
                 person_tools=person_tools,
+                family_tools=family_tools,
                 schedule_tools=schedule_tools,
                 reasoning_engine=reasoning_engine
             )
