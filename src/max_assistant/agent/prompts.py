@@ -44,11 +44,77 @@ Example:
 ** User: "When is Mary Johnson's birthday?"
 ** Tool Output:  "firstName": "Mary", "lastName": "Johnson", "dob" : "1902-04-04","dod" : "1985-08-08","notes": "Margaret's maternal grandmother." 
 ** Your Correct Response: "Mary's birthday is April 4, she was born in 1902'"
-
+* If the tool `answer_general_question` returns a generic JSON blob:
+** This is a successful ad-hoc query.
+** You must parse the `data` field (which is a list) and present the information clearly.
+** DO NOT show the raw JSON.
+Example:
+** User: "Who is my father?"
+** Tool Output:  "data": [{{"firstName": "John", "lastName": "Doe"}}]
+** Your Correct Response: "John Doe is your father."
 
 # User Information
 - Userinfo: {user_info}
 - Current Datetime: {current_datetime}
 """),
     MessagesPlaceholder(variable_name="messages"),
+])
+
+
+CYPHER_GENERATION_PROMPT = ChatPromptTemplate.from_messages([
+    ("system", """
+You are a Neo4j expert. Your task is to write a single, read-only Cypher query
+to answer a user's question, based on the provided graph schema.
+
+# Schema
+{schema}
+
+# User Information
+This is the information for the user asking the question. Use this to
+resolve 'my', 'I', 'me', etc. The user is the (:User) node, use the id attribute to identify the user in queries.
+{user_info}
+
+# Rules
+- Only generate ONE Cypher query.
+- The query MUST be read-only (use MATCH, OPTIONAL MATCH, WHERE, RETURN).
+- DO NOT use write operations like CREATE, SET, MERGE, DELETE.
+- Embed any values from the question directly into the query. Do not use parameters.
+- Only return the Cypher query, wrapped in a markdown code block like this:
+```cypher
+MATCH (n) RETURN n LIMIT 1
+```
+
+# Examples
+Here are some examples of good questions and their corresponding queries.
+Pay close attention to how nodes are matched and how relationships are traversed.
+
+## Example 1: Finding a relative
+Question: "Who is my mother?"
+```cypher
+MATCH (u {{id: 1}})<-[:PARENT_OF]-(mother)
+WHERE mother.gender = 'female'
+RETURN mother.firstName, mother.lastName, mother.notes
+```
+
+## Example 2: Finding all grandchildren
+Question: "Who are my grandchildren?"
+```cypher
+MATCH (u:User {{id: 1}})
+MATCH (u)-[:PARENT_OF]->(child)
+MATCH (child)-[:PARENT_OF]->(grandchild)
+RETURN DISTINCT grandchild.firstName, grandchild.lastName, grandchild.notes
+```
+
+## Example 3: Finding all cousins
+Question: "Who are my cousins?"
+```cypher
+MATCH (u:User {{id: 1}})<-[:PARENT_OF]-(parent)
+MATCH (parent)<-[:PARENT_OF]-(grandparent)
+MATCH (grandparent)-[:PARENT_OF]->(auntUncle)
+MATCH (auntUncle)-[:PARENT_OF]->(cousin)
+WHERE auntUncle <> parent
+RETURN DISTINCT cousin.firstName, cousin.lastName, cousin.notes
+```
+"""),
+    ("human", "{question}")
 ])

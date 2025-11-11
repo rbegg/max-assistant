@@ -21,11 +21,13 @@ from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
 from langchain_core.tools import BaseTool
 from langchain_ollama import ChatOllama
+from langchain_core.language_models import BaseChatModel
 
 from max_assistant.agent.prompts import senior_assistant_prompt
 from max_assistant.agent.state import GraphState
 from max_assistant.tools.schedule_tools import ScheduleTools
 from max_assistant.tools.person_tools import PersonTools
+from max_assistant.tools.general_query_tools import GeneralQueryTools
 from max_assistant.tools.time_tools import get_current_datetime
 from max_assistant.config import MESSAGE_PRUNING_LIMIT
 from max_assistant.utils.datetime_utils import current_datetime
@@ -46,17 +48,28 @@ def prune_messages(state: GraphState):
     return {}
 
 
-async def initialize_all_tools(person_tools: PersonTools, schedule_tools: ScheduleTools) -> List[BaseTool]:
+async def initialize_all_tools(
+        llm: BaseChatModel,
+        person_tools: PersonTools,
+        schedule_tools: ScheduleTools
+) -> List[BaseTool]:
     """
     Instantiates all tool services and returns a single, flat list of tools.
     This keeps the graph-building logic clean.
     """
     logger.info("Initializing tool services...")
 
+    # We need a client. We can grab it from person_tools.
+    neo4j_client = person_tools.client
+
+    # Instantiate the new toolset
+    general_tools = GeneralQueryTools(client=neo4j_client, llm=llm)
+
     # Get the lists of bound methods
     all_tools: List[BaseTool] = []
     all_tools.extend(schedule_tools.get_tools())
     all_tools.extend(person_tools.get_tools())
+    all_tools.extend(general_tools.get_tools())
 
     # Add any standalone tools
     all_tools.extend([get_current_datetime])
@@ -70,7 +83,7 @@ async def create_reasoning_engine(llm: ChatOllama, person_tools: PersonTools, sc
     """Builds the graph with pruning, model calls, and tool execution."""
 
     # 1. Initialize Tools
-    tools = await initialize_all_tools(person_tools, schedule_tools)
+    tools = await initialize_all_tools(llm, person_tools, schedule_tools)
     llm_with_tools = llm.bind_tools(tools)
 
     # 2. Define Nodes that will be part of the graph

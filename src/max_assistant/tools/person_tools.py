@@ -209,7 +209,9 @@ class PersonTools:
         """
         Given a person's full name, returns a simple description of their
         relationship to the user (e.g., 'husband', 'daughter', 'friend', 'doctor').
+        Only call this tool if the user provides a name, otherwise use the general query tool.
         This is case-insensitive. It prioritizes family connections.
+
         """
         logger.info(f"Tool: get_relationship_to_user for {first_name} {last_name}")
         params = {
