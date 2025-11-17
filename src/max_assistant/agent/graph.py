@@ -14,9 +14,11 @@ chat applications or AI-powered assistants.
 """
 
 import logging
+import json
 from typing import Literal, List
+import uuid
 
-from langchain_core.messages import HumanMessage, ToolMessage
+from langchain_core.messages import HumanMessage, ToolMessage, AIMessage, ToolCall
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
 from langchain_core.tools import BaseTool
@@ -26,6 +28,7 @@ from langchain_core.language_models import BaseChatModel
 from max_assistant.agent.prompts import senior_assistant_prompt
 from max_assistant.agent.state import GraphState
 from max_assistant.tools.family_tools import FamilyTools
+from max_assistant.tools.gmail_tools import GmailTools
 from max_assistant.tools.schedule_tools import ScheduleTools
 from max_assistant.tools.person_tools import PersonTools
 from max_assistant.tools.general_query_tools import GeneralQueryTools
@@ -53,7 +56,8 @@ async def initialize_all_tools(
         llm: BaseChatModel,
         person_tools: PersonTools,
         family_tools: FamilyTools,
-        schedule_tools: ScheduleTools
+        schedule_tools: ScheduleTools,
+        gmail_tools: GmailTools
 ) -> List[BaseTool]:
     """
     Instantiates all tool services and returns a single, flat list of tools.
@@ -73,6 +77,7 @@ async def initialize_all_tools(
     all_tools.extend(person_tools.get_tools())
     all_tools.extend(general_tools.get_tools())
     all_tools.extend(family_tools.get_tools())
+    all_tools.extend(gmail_tools.get_tools())
 
     # Add any standalone tools
     all_tools.extend([get_current_datetime])
@@ -86,11 +91,12 @@ async def create_reasoning_engine(
         llm: ChatOllama,
         person_tools: PersonTools,
         family_tools: FamilyTools,
-        schedule_tools: ScheduleTools ):
+        schedule_tools: ScheduleTools,
+        gmail_tools: GmailTools,):
     """Builds the graph with pruning, model calls, and tool execution."""
 
     # 1. Initialize Tools
-    tools = await initialize_all_tools(llm, person_tools, family_tools, schedule_tools)
+    tools = await initialize_all_tools(llm, person_tools, family_tools, schedule_tools, gmail_tools)
     llm_with_tools = llm.bind_tools(tools)
 
     # 2. Define Nodes that will be part of the graph
@@ -126,7 +132,37 @@ async def create_reasoning_engine(
 
         logger.info(f"Model produced: {response.content}")
 
-        # Return only the AI's response to be appended to the state
+        if response.tool_calls:
+            # It's a standard tool call, just return it
+            return {"messages": [response]}
+
+        try:
+            # Check if the *content* is a JSON tool call
+            content_json = json.loads(response.content)
+            if isinstance(content_json, dict) and "name" in content_json:
+                logger.warning("Raw JSON tool call detected. Re-formatting message.")
+
+                # Create a proper AIMessage with a tool_calls attribute
+                tool_call_obj = ToolCall(
+                    name=content_json["name"],
+                    args=content_json.get("parameters", {}),
+                    id=str(uuid.uuid4())  # Create a new ID
+                )
+
+                # Create a new message that has the 'tool_calls'
+                # attribute that should_continue is looking for.
+                new_response = AIMessage(
+                    content="",  # Content is now empty
+                    tool_calls=[tool_call_obj],
+                    id=response.id
+                )
+                return {"messages": [new_response]}
+
+        except (json.JSONDecodeError, TypeError):
+            # It's just a regular text response, not JSON
+            pass
+
+            # It's a regular text response, return it as-is
         return {"messages": [response]}
 
     def should_continue(state: GraphState) -> Literal["execute_tools", "end"]:

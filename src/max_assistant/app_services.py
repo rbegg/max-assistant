@@ -16,6 +16,7 @@ from max_assistant.config import (
 )
 from max_assistant.clients.neo4j_client import Neo4jClient
 from max_assistant.clients.ollama_preloader import warm_up_ollama_async
+from max_assistant.tools.gmail_tools import GmailTools
 from max_assistant.tools.person_tools import PersonTools
 from max_assistant.tools.family_tools import FamilyTools
 from max_assistant.tools.schedule_tools import ScheduleTools
@@ -37,6 +38,7 @@ class AppServices:
             person_tools: PersonTools,
             family_tools: FamilyTools,
             schedule_tools: ScheduleTools,
+            gmail_tools: GmailTools,
             reasoning_engine: Any  # This is the compiled StateGraph
     ):
         self.db_client = db_client
@@ -45,6 +47,7 @@ class AppServices:
         self.family_tools = family_tools
         self.schedule_tools = schedule_tools
         self.reasoning_engine = reasoning_engine
+        self.gmail_tools = gmail_tools
 
     @classmethod
     async def create(cls) -> "AppServices":
@@ -83,12 +86,13 @@ class AppServices:
             person_tools = PersonTools(db_client)
             family_tools = FamilyTools(client=db_client)
             schedule_tools = ScheduleTools(client=db_client)
+            gmail_tools = GmailTools(client=db_client)
             logger.info("Tool services initialized.")
 
             # 4. Create Reasoning Engine
             logger.info("Initializing the reasoning engine...")
             # This now passes the correct arguments, fixing the P0 bug
-            reasoning_engine = await create_reasoning_engine(llm, person_tools, family_tools, schedule_tools)
+            reasoning_engine = await create_reasoning_engine(llm, person_tools, family_tools, schedule_tools, gmail_tools)
             logger.info("Reasoning engine initialized.")
 
             # 5. Create and return the container instance
@@ -98,7 +102,8 @@ class AppServices:
                 person_tools=person_tools,
                 family_tools=family_tools,
                 schedule_tools=schedule_tools,
-                reasoning_engine=reasoning_engine
+                reasoning_engine=reasoning_engine,
+                gmail_tools=gmail_tools,
             )
 
         except Exception as e:
