@@ -7,15 +7,14 @@ questions against the Neo4j database.
 import json
 import re
 import logging
-from typing import Type
 
-from langchain_core.language_models import BaseChatModel
+from langchain_ollama import ChatOllama
 from langchain_core.tools import StructuredTool
-from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
 from max_assistant.clients.neo4j_client import Neo4jClient
 from max_assistant.agent.prompts import CYPHER_GENERATION_PROMPT
+from max_assistant.tools.registry import BaseToolProvider
 
 logger = logging.getLogger(__name__)
 
@@ -32,18 +31,17 @@ class GeneralQuestionArgs(BaseModel):
     )
 
 
-class GeneralQueryTools:
+class GeneralQueryTools(BaseToolProvider):
     """
     A toolset that uses an LLM to dynamically generate and execute
     Cypher queries for ad-hoc questions.
     """
 
-    def __init__(self, client: Neo4jClient, llm: BaseChatModel):
+    def __init__(self, db_client: Neo4jClient, llm: ChatOllama):
         """
         Initializes the toolset with a Neo4j client and an LLM.
         """
-        self.client = client
-        self.llm = llm
+        super().__init__(db_client, llm)
         self.cypher_generation_chain = CYPHER_GENERATION_PROMPT | self.llm
         logger.info("GeneralQueryTools initialized with Neo4j client and LLM.")
 
@@ -79,7 +77,7 @@ class GeneralQueryTools:
 
         try:
             # 1. Get the graph schema
-            schema_str = await self.client.get_schema()
+            schema_str = await self.db_client.get_schema()
 
             # Check for error in schema fetching
             try:
@@ -105,7 +103,7 @@ class GeneralQueryTools:
 
             # 3. Execute the query
             # We use params={} as the LLM is instructed to embed values
-            result = await self.client.execute_query(cypher_query, params={})
+            result = await self.db_client.execute_query(cypher_query, params={})
 
             # 4. Return the raw JSON string
             return json.dumps(result, indent=2)

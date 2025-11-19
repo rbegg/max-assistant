@@ -97,11 +97,8 @@ async def websocket_endpoint(client_ws: WebSocket):
         return
     logger.info("Reasoning engine and services are ready.")
 
-    # --- Pass the correct services from the container ---
-    # This also fixes the P0 bug of passing the wrong arguments
     manager = ConnectionManager(
-        app_services.reasoning_engine,
-        app_services.user_info,
+        app_services,
         client_ws
     )
     try:

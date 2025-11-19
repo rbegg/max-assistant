@@ -9,67 +9,61 @@ including registration, dependency injection into providers' constructors, and
 access to all tools provided by the registered providers.
 """
 import logging
-import inspect
-from typing import List, Type, Any, Dict
+from typing import List, Type
 
 from langchain_core.tools import BaseTool
-from langchain_core.language_models import BaseChatModel
+from langchain_ollama import ChatOllama
 
 from max_assistant.clients.neo4j_client import Neo4jClient
 
 logger = logging.getLogger(__name__)
 
 
-class ToolRegistry:
+class BaseToolProvider:
     """
-    A central registry for discovering, initializing, and collecting all tools.
+    Abstract base class for a class that provides tools.
+    This helps with type hinting and structure.
     """
-
-    def __init__(self, db_client: Neo4jClient, llm: BaseChatModel):
-        """
-        Initializes the registry with shared services that tools may need.
-        """
+    def __init__(self, db_client: Neo4jClient = None, llm: ChatOllama = None):
         self.db_client = db_client
         self.llm = llm
-        self._tool_providers: List[Type[Any]] = []
-        self._tool_instances: Dict[Type[Any], Any] = {}
 
-    def register_provider(self, provider_class: Type[Any]):
-        """Registers a class that provides tools (e.g., PersonTools)."""
-        if provider_class not in self._tool_providers:
-            self._tool_providers.append(provider_class)
+    def get_tools(self) -> List[BaseTool]:
+        raise NotImplementedError
 
-    def _get_provider_instance(self, provider_class: Type[Any]) -> Any:
+
+class ToolRegistry:
+    """
+    A registry to manage the collection and initialization of tool providers.
+    """
+
+    def __init__(self, db_client: Neo4jClient, llm: ChatOllama):
+        self.db_client = db_client
+        self.llm = llm
+        self._providers: List[BaseToolProvider] = []
+        self._tools: List[BaseTool] = []
+
+    def register_provider(self, provider_class: Type[BaseToolProvider]):
         """
-        Lazily instantiates and caches a tool provider, injecting the
-        necessary dependencies by inspecting its constructor.
+        Initializes and registers a tool provider.
+        The provider class is instantiated with the db_client and llm.
         """
-        if provider_class not in self._tool_instances:
-            constructor_params = inspect.signature(provider_class.__init__).parameters
-            dependencies = {}
-            if 'client' in constructor_params:
-                dependencies['client'] = self.db_client
-            if 'llm' in constructor_params:
-                dependencies['llm'] = self.llm
+        if not issubclass(provider_class, BaseToolProvider):
+            logger.warning(
+                f"Class {provider_class.__name__} does not inherit from BaseToolProvider. "
+                "Registration might not work as expected."
+            )
 
-            logger.info(f"Instantiating {provider_class.__name__} with dependencies: {list(dependencies.keys())}")
-            instance = provider_class(**dependencies)
-            self._tool_instances[provider_class] = instance
-        return self._tool_instances[provider_class]
+        # Instantiate the provider, passing the necessary clients.
+        provider_instance = provider_class(db_client=self.db_client, llm=self.llm)
+        self._providers.append(provider_instance)
+        # Eagerly collect tools upon registration.
+        new_tools = provider_instance.get_tools()
+        self._tools.extend(new_tools)
+        logger.info(f"Registered {len(new_tools)} tools from {provider_class.__name__}.")
 
     def get_all_tools(self) -> List[BaseTool]:
         """
-        Instantiates all registered providers and collects their tools into a flat list.
+        Returns a flat list of all tools from all registered providers.
         """
-        all_tools: List[BaseTool] = []
-        for provider_class in self._tool_providers:
-            provider_instance = self._get_provider_instance(provider_class)
-            if hasattr(provider_instance, 'get_tools'):
-                tools = provider_instance.get_tools()
-                all_tools.extend(tools)
-                logger.info(f"Loaded {len(tools)} tools from {provider_class.__name__}")
-        return all_tools
-
-    def get_tool_provider(self, provider_class: Type[Any]) -> Any:
-        """Gets a specific, initialized tool provider instance by its class."""
-        return self._get_provider_instance(provider_class)
+        return self._tools

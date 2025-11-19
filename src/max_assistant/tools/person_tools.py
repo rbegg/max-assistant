@@ -7,6 +7,7 @@ import json
 import logging
 from typing import Optional, Type, Dict, Any
 
+from langchain_ollama import ChatOllama
 from langchain_core.tools import StructuredTool
 from pydantic import ValidationError, BaseModel
 
@@ -15,25 +16,26 @@ from max_assistant.models.person_models import (
     PersonDetails,
     FindPersonByNameArgs,
     FindPersonByTitleArgs,
-    GetRelationshipArgs,
+    # GetRelationshipArgs,
     GetUserInfoArgs
 )
 from max_assistant.models.location_models import LocationDetails
+from max_assistant.tools.registry import BaseToolProvider
 
 logger = logging.getLogger(__name__)
 
 
-class PersonTools:
+class PersonTools(BaseToolProvider):
     """
     A class that encapsulates person-related tools and holds a
     dedicated Neo4j client instance.
     """
 
-    def __init__(self, client: Neo4jClient):
+    def __init__(self, db_client: Neo4jClient, llm: ChatOllama = None):
         """
         Initializes the toolset with a specific Neo4j client.
         """
-        self.client = client
+        super().__init__(db_client, llm)
         logger.info("PersonTools initialized with a Neo4j client.")
 
     async def _query_and_validate_nodes(
@@ -48,7 +50,7 @@ class PersonTools:
         Pydantic model, and return a JSON string.
         """
         logger.debug(f"Executing query with params: {params} for model: {model_class.__name__}")
-        result = await self.client.execute_query(query, params)
+        result = await self.db_client.execute_query(query, params)
 
         if "error" in result:
             return json.dumps(result)
@@ -129,7 +131,7 @@ class PersonTools:
             ORDER BY length(path) ASC
             LIMIT 1
             """
-        result = await self.client.execute_query(family_query, params)
+        result = await self.db_client.execute_query(family_query, params)
         if "error" in result:
             logger.warning(f"Family path query failed: {result['error']}")
             return None
@@ -145,7 +147,7 @@ class PersonTools:
             ORDER BY length(path) ASC
             LIMIT 1
             """
-        result = await self.client.execute_query(other_query, params)
+        result = await self.db_client.execute_query(other_query, params)
         if "error" in result:
             logger.warning(f"Other path query failed: {result['error']}")
             return None
@@ -186,7 +188,7 @@ class PersonTools:
             "last_name": last_name.lower() if last_name else None
         }
 
-        result = await self.client.execute_query(query, params)
+        result = await self.db_client.execute_query(query, params)
 
         if "error" in result:
             return json.dumps(result)
@@ -274,7 +276,7 @@ class PersonTools:
             "first_name": first_name.lower(),
             "last_name": last_name.lower()
         }
-        find_result = await self.client.execute_query(find_query, params)
+        find_result = await self.db_client.execute_query(find_query, params)
 
         if "error" in find_result:
             return json.dumps(find_result)
@@ -315,7 +317,7 @@ class PersonTools:
             RETURN properties(u) AS user, properties(l) AS location
             LIMIT 1
             """
-        result = await self.client.execute_query(query, {})
+        result = await self.db_client.execute_query(query, {})
 
         if "error" in result:
             return result
