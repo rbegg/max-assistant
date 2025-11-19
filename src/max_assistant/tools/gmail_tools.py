@@ -9,10 +9,8 @@ Classes:
 - GmailTools: Encapsulates Gmail API operations, providing methods for
   user authentication, token management, and email sending.
 """
-import os.path
 import base64
 import logging
-import os
 import json
 import asyncio
 from email.mime.text import MIMEText
@@ -24,13 +22,14 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
+from langchain_ollama import ChatOllama
 from langchain_core.tools import StructuredTool
 from max_assistant.models.google_models import SendGmailArgs
 from max_assistant.clients.neo4j_client import Neo4jClient
 from max_assistant.config import (
     GOOGLE_SENDER_EMAIL, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
 )
-
+from max_assistant.tools.registry import BaseToolProvider
 
 logger = logging.getLogger(__name__)
 
@@ -42,17 +41,17 @@ TOKEN_URI = "https://oauth2.googleapis.com/token"
 
 # --- Main Class ---
 
-class GmailTools:
+class GmailTools(BaseToolProvider):
     """
     An async class that encapsulates Gmail API operations.
     It requires a Neo4jClient to store and retrieve user credentials.
     """
 
-    def __init__(self, client: Neo4jClient):
+    def __init__(self, db_client: Neo4jClient, llm: ChatOllama = None):
         """
         Initializes the toolset with a Neo4j client.
         """
-        self.client = client
+        super().__init__(db_client, llm)
         self.sender_email = GOOGLE_SENDER_EMAIL
         self.client_id = GOOGLE_CLIENT_ID
         self.client_secret = GOOGLE_CLIENT_SECRET
@@ -68,7 +67,7 @@ class GmailTools:
         """
 
         check_query = "MATCH (u:User) RETURN u.gmailRefreshToken AS token"
-        result = await self.client.execute_query(check_query, {})
+        result = await self.db_client.execute_query(check_query, {})
         if "data" in result and result["data"] and result["data"][0].get("token"):
             logger.warning(
                 "Gmail refresh token already exists for the User in Neo4j. "
@@ -112,7 +111,7 @@ class GmailTools:
             "expiry": creds.expiry.isoformat()  # Store expiry as an ISO string
         }
 
-        await self.client.execute_query(set_query, params)
+        await self.db_client.execute_query(set_query, params)
         logger.info("Authentication successful. All user tokens saved to :User node.")
 
     async def _get_credentials(self) -> Credentials | None:
@@ -132,7 +131,7 @@ class GmailTools:
                u.gmailAccessToken AS access_token,
                u.gmailTokenExpiry AS expiry
         """
-        result = await self.client.execute_query(get_query, {})
+        result = await self.db_client.execute_query(get_query, {})
 
         if "error" in result:
             logger.error(f"Neo4j error: {result['error']}")
@@ -178,7 +177,7 @@ class GmailTools:
                     "access_token": creds.token,
                     "expiry": creds.expiry.isoformat()
                 }
-                await self.client.execute_query(set_query, params)
+                await self.db_client.execute_query(set_query, params)
                 logger.info("Access token refreshed and saved back to Neo4j.")
 
             elif creds.valid:

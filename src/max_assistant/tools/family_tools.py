@@ -8,10 +8,12 @@ import logging
 from typing import Type
 
 from langchain_core.tools import StructuredTool
+from langchain_ollama import ChatOllama
 from pydantic import ValidationError, BaseModel
 
 from max_assistant.clients.neo4j_client import Neo4jClient
 from max_assistant.models.person_models import PersonDetails
+from max_assistant.tools.registry import BaseToolProvider
 
 logger = logging.getLogger(__name__)
 
@@ -21,17 +23,17 @@ class NoArgs(BaseModel):
     pass
 
 
-class FamilyTools:
+class FamilyTools(BaseToolProvider):
     """
     A class that encapsulates family-tree-related tools,
     with all queries relative to the :User node.
     """
 
-    def __init__(self, client: Neo4jClient):
+    def __init__(self, db_client: Neo4jClient, llm: ChatOllama = None):
         """
         Initializes the toolset with a specific Neo4j client.
         """
-        self.client = client
+        super().__init__(db_client, llm)
         logger.info("FamilyTools initialized with a Neo4j client.")
 
     async def _query_and_validate_nodes(
@@ -47,7 +49,7 @@ class FamilyTools:
         (This is a copy of the helper in PersonTools)
         """
         logger.debug(f"Executing query for model: {model_class.__name__}")
-        result = await self.client.execute_query(query, params)
+        result = await self.db_client.execute_query(query, params)
 
         if "error" in result:
             return json.dumps(result)

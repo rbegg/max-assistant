@@ -6,9 +6,10 @@ Defines Pydantic models for the schedule-related tools and neo4j nodes
 import json
 import asyncio
 import logging
+from langchain_ollama import ChatOllama
 from typing import Optional, Type
 
-from langchain_core.tools import StructuredTool, tool
+from langchain_core.tools import StructuredTool
 from pydantic import ValidationError, BaseModel
 
 from max_assistant.clients.neo4j_client import Neo4jClient
@@ -17,16 +18,17 @@ from max_assistant.models.schedule_models import (
     DailyRoutine,
     CreateAppointmentArgs
 )
+from max_assistant.tools.registry import BaseToolProvider
 
 logger = logging.getLogger(__name__)
 
 
-class ScheduleTools:
-    def __init__(self, client: Neo4jClient):
+class ScheduleTools(BaseToolProvider):
+    def __init__(self, db_client: Neo4jClient, llm: ChatOllama = None):
         """
         Initializes the toolset with a specific Neo4j client.
         """
-        self.client = client
+        super().__init__(db_client, llm)
         logger.info("PersonTools initialized with a Neo4j client.")
 
 
@@ -42,7 +44,7 @@ class ScheduleTools:
         Pydantic model, and return a JSON string.
         """
         logger.debug(f"Executing query with params: {params} for model: {model_class.__name__}")
-        result = await self.client.execute_query(query, params)
+        result = await self.db_client.execute_query(query, params)
 
         # --- Pydantic Validation Step ---
         if "error" in result:
@@ -223,7 +225,7 @@ class ScheduleTools:
                 """
 
         # The client returns a dict, so we just dump it to a string for the LLM
-        result = await self.client.execute_query(query, params)
+        result = await self.db_client.execute_query(query, params)
         return json.dumps(result, indent=2)
 
 
