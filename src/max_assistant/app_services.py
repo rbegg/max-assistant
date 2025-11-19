@@ -8,7 +8,7 @@ Common to main.py and text_client.py.
 import logging
 import asyncio
 from langchain_ollama import ChatOllama
-from typing import Any  # Used for the compiled graph type
+from typing import Any, Dict  # Used for the compiled graph type
 
 from max_assistant.config import (
     NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD,
@@ -16,8 +16,12 @@ from max_assistant.config import (
 )
 from max_assistant.clients.neo4j_client import Neo4jClient
 from max_assistant.clients.ollama_preloader import warm_up_ollama_async
+from max_assistant.tools.registry import ToolRegistry
 from max_assistant.tools.person_tools import PersonTools
+from max_assistant.tools.family_tools import FamilyTools
 from max_assistant.tools.schedule_tools import ScheduleTools
+from max_assistant.tools.gmail_tools import GmailTools
+from max_assistant.tools.general_query_tools import GeneralQueryTools
 from max_assistant.agent.graph import create_reasoning_engine
 
 logger = logging.getLogger(__name__)
@@ -33,14 +37,14 @@ class AppServices:
             self,
             db_client: Neo4jClient,
             llm: ChatOllama,
-            person_tools: PersonTools,
-            schedule_tools: ScheduleTools,
+            tool_registry: ToolRegistry,
+            user_info: Dict[str, Any],
             reasoning_engine: Any  # This is the compiled StateGraph
     ):
         self.db_client = db_client
         self.llm = llm
-        self.person_tools = person_tools
-        self.schedule_tools = schedule_tools
+        self.tool_registry = tool_registry
+        self.user_info = user_info
         self.reasoning_engine = reasoning_engine
 
     @classmethod
@@ -75,25 +79,33 @@ class AppServices:
                 raise RuntimeError("Failed to initialize the LLM.")
             logger.info("Successfully initialized Neo4j client and LLM.")
 
-            # 3. Create Tool Services
-            logger.info("Initializing tool services...")
-            person_tools = PersonTools(db_client)
-            schedule_tools = ScheduleTools(client=db_client)
-            logger.info("Tool services initialized.")
+            # 3. Fetch user info once
+            # We temporarily create PersonTools to fetch this on startup
+            person_tools_instance = PersonTools(db_client)
+            user_info = await person_tools_instance.get_user_info_internal()
 
-            # 4. Create Reasoning Engine
+            # 4. Create Tool Registry and register all tool providers
+            logger.info("Initializing and populating tool registry...")
+            tool_registry = ToolRegistry(db_client=db_client, llm=llm)
+            tool_registry.register_provider(PersonTools)
+            tool_registry.register_provider(FamilyTools)
+            tool_registry.register_provider(ScheduleTools)
+            tool_registry.register_provider(GmailTools)
+            tool_registry.register_provider(GeneralQueryTools)
+            logger.info("Tool providers registered.")
+
+            # 5. Create Reasoning Engine, passing the registry
             logger.info("Initializing the reasoning engine...")
-            # This now passes the correct arguments, fixing the P0 bug
-            reasoning_engine = await create_reasoning_engine(llm, person_tools, schedule_tools)
+            reasoning_engine = await create_reasoning_engine(llm, tool_registry)
             logger.info("Reasoning engine initialized.")
 
-            # 5. Create and return the container instance
+            # 6. Create and return the container instance
             return cls(
                 db_client=db_client,
                 llm=llm,
-                person_tools=person_tools,
-                schedule_tools=schedule_tools,
-                reasoning_engine=reasoning_engine
+                tool_registry=tool_registry,
+                user_info=user_info,
+                reasoning_engine=reasoning_engine,
             )
 
         except Exception as e:

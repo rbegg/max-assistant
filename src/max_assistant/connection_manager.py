@@ -24,7 +24,6 @@ from max_assistant.agent.agent import Agent
 from max_assistant.config import QUEUE_GET_TIMEOUT
 from max_assistant.clients.stt_client import STTClient
 from max_assistant.clients.tts_client import TTSClient
-from max_assistant.tools.person_tools import PersonTools
 
 logger = logging.getLogger(__name__)
 
@@ -32,9 +31,9 @@ logger = logging.getLogger(__name__)
 class ConnectionManager:
     """Manages the state and logic for a single client WebSocket connection."""
 
-    def __init__(self, reasoning_engine, person_tools: PersonTools, websocket: WebSocket):
+    def __init__(self, reasoning_engine, user_info: dict, websocket: WebSocket):
         self.ws = websocket
-        self.agent = Agent(reasoning_engine, person_tools)
+        self.agent = Agent(reasoning_engine, user_info)
         self.stt_client = STTClient()
         self.tts_client = TTSClient()
         # Each connection gets its own set of queues
@@ -46,8 +45,6 @@ class ConnectionManager:
     async def handle_connection(self):
         """Manages all tasks for a single client connection."""
         logger.info("Handling new client connection.")
-
-        await self.agent.initialize_session()
 
         # Fire-and-forget pre-warming of the TTS connection.
         asyncio.create_task(self.tts_client.connect())

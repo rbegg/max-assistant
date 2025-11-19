@@ -43,6 +43,12 @@ NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
 NEO4J_USERNAME = os.getenv("NEO4J_USERNAME", "neo4j")
 NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "password")
 
+# --- Gmail Configuration ---
+GOOGLE_SENDER_EMAIL = os.getenv("GOOGLE_SENDER_EMAIL", "")
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
+logging.info(f"GOOGLE_SENDER_EMAIL: {GOOGLE_SENDER_EMAIL}")
+
 # Validate MESSAGE_PRUNING_LIMIT
 limit_str = (os.getenv("MESSAGE_PRUNING_LIMIT", 10))
 MESSAGE_PRUNING_LIMIT = int(limit_str)

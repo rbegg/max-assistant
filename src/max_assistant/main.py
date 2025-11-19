@@ -9,8 +9,6 @@ from fastapi import FastAPI, WebSocket
 
 from max_assistant.config import (
     PORT, HOST,
-    NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD,
-    OLLAMA_MODEL_NAME, OLLAMA_BASE_URL
 )
 
 from max_assistant.app_services import AppServices
@@ -103,7 +101,7 @@ async def websocket_endpoint(client_ws: WebSocket):
     # This also fixes the P0 bug of passing the wrong arguments
     manager = ConnectionManager(
         app_services.reasoning_engine,
-        app_services.person_tools,
+        app_services.user_info,
         client_ws
     )
     try:
