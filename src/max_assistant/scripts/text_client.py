@@ -53,8 +53,7 @@ async def main(log_path=None):
         print(f"Failed to initialize application: {e}")
         raise e
 
-    agent = Agent(app_services.reasoning_engine, app_services.person_tools)
-    await agent.initialize_session()
+    agent = Agent(app_services.reasoning_engine, app_services.user_info)
 
     print("Agent is ready. Type 'exit' to quit.")
 

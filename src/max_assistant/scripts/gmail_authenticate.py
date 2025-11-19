@@ -4,6 +4,9 @@ import logging
 import asyncio
 
 from dotenv import load_dotenv
+if not load_dotenv('../.env.local'):
+    print("Failed to load environment variables.")
+    exit(1)
 
 # Import both the tool and the client
 from max_assistant.tools.gmail_tools import GmailTools
@@ -13,9 +16,7 @@ from max_assistant.clients.neo4j_client import Neo4jClient
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-if not load_dotenv('../.env.local'):
-    print("Failed to load environment variables.")
-    exit(1)
+
 
 
 async def main():
@@ -31,7 +32,7 @@ async def main():
     test_recipient_email = sys.argv[1]
 
     # 2. Check for environment variables
-    sender_email = os.environ.get("SENDER_EMAIL")
+    sender_email = os.environ.get("GOOGLE_SENDER_EMAIL")
     neo4j_uri = os.environ.get("NEO4J_URI")
     neo4j_user = os.environ.get("NEO4J_USER")
     neo4j_pass = os.environ.get("NEO4J_PASSWORD")

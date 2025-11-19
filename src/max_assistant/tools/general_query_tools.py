@@ -68,8 +68,10 @@ class GeneralQueryTools:
 
     async def answer_general_question(self, question: str, user_info_json: str) -> str:
         """
-        Use this tool for any general, ad-hoc, or complex questions that cannot be answered by other tools.
-        Examples: find persons who have a relationship to me, find all my friends, find all my children, etc.
+        Use this tool for complex questions about relationships or entities in the graph database that CANNOT be answered
+        by other, more specific tools.
+        IMPORTANT: Do NOT use this tool for simple questions about the user's own identity, such as "what is my name?"
+        or "where do I live?". Answer those directly from the user_info context.
         This tool translates a natural language question into a Cypher query,
         executes it, and returns the raw JSON data.
         """

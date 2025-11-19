@@ -7,45 +7,27 @@ manages conversation state. It provides a clean interface for text-based interac
 
 import logging
 from uuid import uuid4
+from typing import Dict, Any
 
 from max_assistant.config import DEFAULT_USERNAME, TTS_VOICE
 from max_assistant.agent.state import GraphState
-from max_assistant.tools.person_tools import PersonTools
 
 logger = logging.getLogger(__name__)
 
 class Agent:
     """Encapsulates the reasoning engine and conversation state management."""
 
-    def __init__(self, reasoning_engine, person_tools: PersonTools):
+    def __init__(self, reasoning_engine, initial_user_info: Dict[str, Any]):
         self.reasoning_engine = reasoning_engine
-        self.person_tools = person_tools
         self.conversation_state: GraphState = {
             "messages": [],
-            "userinfo": {},
-            "thread_id": "",
+            "userinfo": initial_user_info,
+            "thread_id": str(uuid4()),
             "transcribed_text": "",
             "voice": TTS_VOICE
         }
-        self.user_info_dict = None
-
-
-    async def initialize_session(self):
-        """
-        Fetches the user's data to initialize the session.
-        This should be called once after the Agent is created.
-        """
-        logger.info("Initializing agent session: fetching user info...")
-        user_data = await self.person_tools.get_user_info_internal()
-        self.conversation_state["userinfo"] = user_data
-
-        # Try to get the user's name from the loaded data
-        user_name = user_data.get("user", {}).get("firstName", DEFAULT_USERNAME)
-
-        logger.info(f"User info loaded for: {user_name}")
-        # Set a new thread ID for this new session
-        self.set_thread_id(str(uuid4()))
-
+        user_name = initial_user_info.get("user", {}).get("firstName", DEFAULT_USERNAME)
+        logger.info(f"Agent initialized for user: {user_name}")
 
     async def ainvoke(self, text_input: str) -> str:
         """Invokes the agent with text input and returns the text response."""
@@ -54,7 +36,7 @@ class Agent:
             "transcribed_text": text_input,
             "messages": self.conversation_state.get("messages", []),
             "userinfo": self.conversation_state.get("userinfo", {}),
-            "thread_id": self.conversation_state.get("thread_id", str(uuid4())),
+            "thread_id": self.conversation_state.get("thread_id"),
             "voice": self.conversation_state.get("voice", TTS_VOICE)
         }
         logger.info(f"Calling Reasoning engine with: {text_input}")

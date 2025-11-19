@@ -27,6 +27,9 @@ from googleapiclient.errors import HttpError
 from langchain_core.tools import StructuredTool
 from max_assistant.models.google_models import SendGmailArgs
 from max_assistant.clients.neo4j_client import Neo4jClient
+from max_assistant.config import (
+    GOOGLE_SENDER_EMAIL, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
+)
 
 
 logger = logging.getLogger(__name__)
@@ -50,15 +53,9 @@ class GmailTools:
         Initializes the toolset with a Neo4j client.
         """
         self.client = client
-        self.sender_email = os.environ.get("SENDER_EMAIL")
-        if not self.sender_email:
-            logger.warning(
-                "SENDER_EMAIL environment variable is not set. "
-                "The 'from' field in emails may be incorrect."
-            )
-        # Load app secrets at initialization
-        self.client_id = os.environ.get("GOOGLE_CLIENT_ID")
-        self.client_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
+        self.sender_email = GOOGLE_SENDER_EMAIL
+        self.client_id = GOOGLE_CLIENT_ID
+        self.client_secret = GOOGLE_CLIENT_SECRET
 
         if not self.client_id or not self.client_secret:
             logger.error("FATAL: 'GOOGLE_CLIENT_ID' or 'GOOGLE_CLIENT_SECRET' "
@@ -214,7 +211,8 @@ class GmailTools:
 
     async def send_message(self, to: str, subject: str, message_text: str) -> str:
         """
-        Sends an email message to a recipient on the user's behalf.
+        Sends an email message to a recipient's email address on the user's behalf.
+        The to parameter must be a valid email address.
         Prompt the user for a message if not already provided, and set an appropriate subject.
         Example: User: "Send a message to Ryan"
                  Max: "What would you like to say?"
@@ -225,7 +223,7 @@ class GmailTools:
         Use this tool to send emails if the user wants to ask someone a question, send a message, email etc.
         """
         if not self.sender_email:
-            error_msg = "Error: SENDER_EMAIL environment variable is not set."
+            error_msg = "Error: GOOGLE_SENDER_EMAIL environment variable is not set."
             logger.error(error_msg)
             return json.dumps({"error": error_msg})
 
@@ -241,6 +239,7 @@ class GmailTools:
                 build, "gmail", "v1", credentials=creds
             )
             message = self._create_message(to, subject, message_text)
+            logger.debug(f"Sending email with to: '{to }' subject: '{subject}' body '{message_text}' encoded-message: {message}")
 
             # The '.execute()' call is blocking, run in a thread
             sent_message = await asyncio.to_thread(

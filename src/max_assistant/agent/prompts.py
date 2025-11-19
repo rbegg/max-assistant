@@ -25,6 +25,11 @@ For example, change '7:00 pm' to '7 pm' and '10:00 AM' to '10 AM'
 * if the tools don't return any data, don't make up an answer.
 * Be aware of the entire conversation history.
 
+# User Information
+Check the user information below for details before using the tools.
+- Userinfo: {user_info}
+- Current Datetime: {current_datetime}
+
 #Tool Handling Instructions 
 
 When you receive output from a tool, you must use it to formulate a natural language response.
@@ -53,9 +58,7 @@ Example:
 ** Tool Output:  "data": [{{"firstName": "John", "lastName": "Doe"}}]
 ** Your Correct Response: "John Doe is your father."
 
-# User Information
-- Userinfo: {user_info}
-- Current Datetime: {current_datetime}
+
 """),
     MessagesPlaceholder(variable_name="messages"),
 ])

@@ -21,17 +21,11 @@ import uuid
 from langchain_core.messages import HumanMessage, ToolMessage, AIMessage, ToolCall
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
-from langchain_core.tools import BaseTool
 from langchain_ollama import ChatOllama
-from langchain_core.language_models import BaseChatModel
 
 from max_assistant.agent.prompts import senior_assistant_prompt
 from max_assistant.agent.state import GraphState
-from max_assistant.tools.family_tools import FamilyTools
-from max_assistant.tools.gmail_tools import GmailTools
-from max_assistant.tools.schedule_tools import ScheduleTools
-from max_assistant.tools.person_tools import PersonTools
-from max_assistant.tools.general_query_tools import GeneralQueryTools
+from max_assistant.tools.registry import ToolRegistry
 from max_assistant.tools.time_tools import get_current_datetime
 from max_assistant.config import MESSAGE_PRUNING_LIMIT
 from max_assistant.utils.datetime_utils import current_datetime
@@ -52,52 +46,18 @@ def prune_messages(state: GraphState):
     return {}
 
 
-async def initialize_all_tools(
-        llm: BaseChatModel,
-        person_tools: PersonTools,
-        family_tools: FamilyTools,
-        schedule_tools: ScheduleTools,
-        gmail_tools: GmailTools
-) -> List[BaseTool]:
-    """
-    Instantiates all tool services and returns a single, flat list of tools.
-    This keeps the graph-building logic clean.
-    """
-    logger.info("Initializing tool services...")
-
-    # We need a client. We can grab it from person_tools.
-    neo4j_client = person_tools.client
-
-    # Instantiate the new toolset
-    general_tools = GeneralQueryTools(client=neo4j_client, llm=llm)
-
-    # Get the lists of bound methods
-    all_tools: List[BaseTool] = []
-    all_tools.extend(schedule_tools.get_tools())
-    all_tools.extend(person_tools.get_tools())
-    all_tools.extend(general_tools.get_tools())
-    all_tools.extend(family_tools.get_tools())
-    all_tools.extend(gmail_tools.get_tools())
-
-    # Add any standalone tools
-    all_tools.extend([get_current_datetime])
-
-    logger.info(f"Successfully initialized {len(all_tools)} tools.")
-    return all_tools
-
-
 # --- Build the Graph ---
 async def create_reasoning_engine(
         llm: ChatOllama,
-        person_tools: PersonTools,
-        family_tools: FamilyTools,
-        schedule_tools: ScheduleTools,
-        gmail_tools: GmailTools,):
+        tool_registry: ToolRegistry,):
     """Builds the graph with pruning, model calls, and tool execution."""
 
-    # 1. Initialize Tools
-    tools = await initialize_all_tools(llm, person_tools, family_tools, schedule_tools, gmail_tools)
+    # 1. Initialize Tools from the registry
+    logger.info("Collecting tools from registry...")
+    tools = tool_registry.get_all_tools()
+    tools.append(get_current_datetime)  # Add standalone tools
     llm_with_tools = llm.bind_tools(tools)
+    logger.info(f"Reasoning engine configured with {len(tools)} tools.")
 
     # 2. Define Nodes that will be part of the graph
 

@@ -165,7 +165,7 @@ class PersonTools:
         """
         Finds a person, family member, friend, or support contact by their first name,
         last name, or both. It returns a list of potential matches with all attributes,
-        including phone number, and address.
+        including phone number, email, notes, and address.
         AND a 'relationship' field describing how they are related to the user.
         At least one name must be provided. Case-insensitive.
         """
@@ -352,6 +352,7 @@ class PersonTools:
         Fetches the primary User node and their LIVES_AT location.
         It takes no arguments and assumes a single User node in the graph.
         Returns the user's properties and their location's properties as a JSON string.
+        This data is cached in the state context Userinfo, use that data instead of this tool.
         """
         output_dict = await self.get_user_info_internal()
         return json.dumps(output_dict, indent=2, default=str)
