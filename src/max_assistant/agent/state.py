@@ -16,9 +16,15 @@ class GraphState(TypedDict):
         transcribed_text: The user's transcribed text for the current turn.
         username: The user's name.
         messages: The full conversation history, which will be pruned.
+        plan: A list of steps for the agent to execute.
+        past_steps: A list of already executed steps and their results.
+        response: The final response to the user.
     """
     transcribed_text: str
     userinfo: dict
     thread_id: str
     messages: Annotated[list[BaseMessage], operator.add]
     voice: str
+    plan: list[str]
+    past_steps: Annotated[list[tuple], operator.add]
+    response: str

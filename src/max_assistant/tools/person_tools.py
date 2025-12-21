@@ -47,7 +47,7 @@ class PersonTools(BaseToolProvider):
     ) -> str:
         """
         Private helper to execute a query, validate results against a
-        Pydantic model, and return a JSON string.
+        Pydantic model and return a JSON string.
         """
         logger.debug(f"Executing query with params: {params} for model: {model_class.__name__}")
         result = await self.db_client.execute_query(query, params)
@@ -165,11 +165,17 @@ class PersonTools(BaseToolProvider):
             last_name: Optional[str] = None
     ) -> str:
         """
-        Finds a person, family member, friend, or support contact by their first name,
-        last name, or both. It returns a list of potential matches with all attributes,
-        including phone number, email, notes, and address.
+        Returns attributes about a person by searching on their first name, last name or both.
+        Includes family member, friend or support person.
+        It returns a list of potential matches with all attributes,
+        including phone number, email, notes and address.
         AND a 'relationship' field describing how they are related to the user.
         At least one name must be provided. Case-insensitive.
+        Use this tool to answer questions like:
+         - 'Who is my husband?'
+         - 'Who is Bob?'
+         - 'Where does Bob live?'
+         - 'What is Bob's phone number?'
         """
         logger.info(f"Tool: find_person_by_name: fn={first_name}, ln={last_name}")
 

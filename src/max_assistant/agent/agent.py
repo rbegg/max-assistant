@@ -24,7 +24,10 @@ class Agent:
             "userinfo": initial_user_info,
             "thread_id": str(uuid4()),
             "transcribed_text": "",
-            "voice": TTS_VOICE
+            "voice": TTS_VOICE,
+            "plan": [],
+            "past_steps": [],
+            "response": ""
         }
         user_name = initial_user_info.get("user", {}).get("firstName", DEFAULT_USERNAME)
         logger.info(f"Agent initialized for user: {user_name}")
@@ -37,13 +40,22 @@ class Agent:
             "messages": self.conversation_state.get("messages", []),
             "userinfo": self.conversation_state.get("userinfo", {}),
             "thread_id": self.conversation_state.get("thread_id"),
-            "voice": self.conversation_state.get("voice", TTS_VOICE)
+            "voice": self.conversation_state.get("voice", TTS_VOICE),
+            # Pass the plan and past steps from the previous state
+            "plan": self.conversation_state.get("plan", []),
+            "past_steps": self.conversation_state.get("past_steps", []),
+            "response": ""  # Always start with an empty response
         }
         logger.info(f"Calling Reasoning engine with: {text_input}")
         final_state = await self.reasoning_engine.ainvoke(inputs)
         self.conversation_state = final_state
 
         llm_response = ""
+        # The 'response' field is now the primary output for human-in-the-loop
+        # questions and the final answer.
+        if final_state.get("response"):
+            return final_state["response"]
+
         if final_state.get("messages") and len(final_state["messages"]) > 0:
             last_message = final_state["messages"][-1]
             llm_response = last_message.content

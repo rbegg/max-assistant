@@ -212,15 +212,10 @@ class GmailTools(BaseToolProvider):
         """
         Sends an email message to a recipient's email address on the user's behalf.
         The to parameter must be a valid email address.
-        Prompt the user for a message if not already provided, and set an appropriate subject.
-        Example: User: "Send a message to Ryan"
-                 Max: "What would you like to say?"
-                 User: "What would you like for your birthday?"
-                 Message: "Hi Ryan, this is Max sending on behalf of <user>.
-                 What would you like for your birthday?"
-                 Subject: "Birthday question"
+        Provide a valid subject and message text.
         Use this tool to send emails if the user wants to ask someone a question, send a message, email etc.
         """
+        logger.info(f"Tool: send_gmail_message to: '{to}' subject: '{subject}'")
         if not self.sender_email:
             error_msg = "Error: GOOGLE_SENDER_EMAIL environment variable is not set."
             logger.error(error_msg)

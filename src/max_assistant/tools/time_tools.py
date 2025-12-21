@@ -19,7 +19,7 @@ class GetCurrentDateTimeInput(BaseModel):
 @tool(args_schema=GetCurrentDateTimeInput)
 async def get_current_datetime() -> dict:
     """
-    Returns the current date and time as an ISO formatted string, without seconds.
+    Returns the current date and time as a human readable date and time string using ISO format, without seconds.
     Use this tool whenever the user asks for the current time, date or queries about today, tomorrow, etc.
     This tool does not take any parameters.
     """
