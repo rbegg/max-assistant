@@ -57,7 +57,7 @@ async def main():
 
     try:
         # 4. Create tool instance (passing the client) and authenticate
-        tools = GmailTools(client=client)
+        tools = GmailTools(db_client=client)
         await tools.authenticate()  # This will open the browser if credentials are not in DB
 
         logger.info("Authentication complete. Attempting to send test message...")
