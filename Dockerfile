@@ -2,8 +2,8 @@
 FROM python:3.11-slim-bookworm AS base
 ARG PYTHON_VERSION=3.11
 
-ENV PYTHONDONTWRITEBYTECODE 1
-ENV PYTHON_BUFFERED 1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHON_BUFFERED=1
 
 RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
 
