@@ -1,6 +1,5 @@
 # ---- Base Stage ----
-FROM python:3.11-slim-bookworm AS base
-ARG PYTHON_VERSION=3.11
+FROM python:3.13.13-slim-trixie AS base
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHON_BUFFERED=1
