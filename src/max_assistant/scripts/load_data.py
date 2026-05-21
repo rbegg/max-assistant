@@ -13,6 +13,7 @@ from max_assistant.clients.neo4j_client import Neo4jClient
 
 # --- Configuration ---
 DATA_DIR = SCRIPT_DIR / "../../../csv_data"
+CONSTRAINTS_FILE = DATA_DIR / "constraints.yaml"
 NODE_CONFIG_FILE = DATA_DIR / "nodes.yaml"
 RELATIONSHIP_CONFIG_FILE = DATA_DIR / "relationships.yaml"
 
@@ -64,8 +65,14 @@ def process_csv_file(file_path):
             data.append(cleaned_row)
     return data
 
+async def process_constraints(client: Neo4jClient, constraints):
+    print_banner("Processing Constraints")
+    # Loop through each node defined in the YAML
+    for c in constraints:
+       print(f"    Constraint = {c}")
+       await run_query(client, c)  # Use await
 
-# --- MODIFIED ---
+
 async def process_nodes(client: Neo4jClient, nodes):
     print_banner("Processing Nodes")
     # Loop through each node defined in the YAML
@@ -148,10 +155,12 @@ async def main():
     # Use the async client
     client = await Neo4jClient.create(NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD)
 
-    # Remove the old sync driver
-
     print_banner("Data Loading Starting!")
     await clear_database(client)  # Use await
+
+    with open(CONSTRAINTS_FILE, 'r') as f:
+        constraints = yaml.safe_load(f)
+        await process_constraints(client, constraints)  # Use await
 
     with open(NODE_CONFIG_FILE, 'r') as f:
         nodes = yaml.safe_load(f)

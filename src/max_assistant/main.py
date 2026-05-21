@@ -13,10 +13,14 @@ from max_assistant.config import (
 
 from max_assistant.app_services import AppServices
 from max_assistant.connection_manager import ConnectionManager
+from max_assistant.agent.agent import Agent
+from max_assistant.tools.reminder_tools import ReminderTools
 
 logger = logging.getLogger(__name__)
 
 app_services: AppServices = None
+poller_task: asyncio.Task = None
+active_user_agent: Agent = None
 
 
 def setup_logging(config_path='log_config.json'):
@@ -51,12 +55,32 @@ async def lifespan(_: FastAPI):
     """
     Manages the application's startup logic.
     """
-    global app_services
+    global app_services, poller_task
     logger.info("Application startup...")
 
     try:
         app_services = await AppServices.create()
-        logger.info("Application services successfully initialized.")
+
+        # 1. Pull the instantiated ReminderTools instance straight out of the registry cache
+        # This matches how your AppServices _initialize_tool_registry loops over providers
+        reminder_tools_instance = next(
+            (p for p in app_services.tool_registry._providers if isinstance(p, ReminderTools)),
+            None
+        )
+
+        if reminder_tools_instance:
+            def get_current_active_agent():
+                global active_user_agent
+                return active_user_agent
+
+            logger.info("Spawning background reminder poller task from ReminderTools registry provider...")
+            poller_task = asyncio.create_task(
+                reminder_tools_instance.start_reminder_poller_dynamic(
+                    get_agent_fn=get_current_active_agent,
+                    poll_interval_seconds=20)
+            )
+        else:
+            logger.error("ReminderTools provider not found in registry! Poller task skipped.")
 
     except Exception as e:
         logger.critical(f"Failed to initialize application: {e}", exc_info=True)
@@ -66,10 +90,22 @@ async def lifespan(_: FastAPI):
 
     yield
 
-    # Shutdown logic: This code runs after the server is stopped
+    logger.info("Application shutting down...")
+
+    # 4. Cancel the background poller cleanly
+    if poller_task and not poller_task.done():
+        logger.info("Cancelling background reminder poller...")
+        poller_task.cancel()
+        try:
+            await poller_task
+        except asyncio.CancelledError:
+            logger.info("Reminder poller background task successfully cancelled.")
+
+    # 5. Close connections
     logger.info("Closing Neo4j client connection...")
     if app_services and app_services.db_client:
         await app_services.db_client.close()
+
     logger.info("Application shutdown complete.")
 
 
@@ -86,10 +122,10 @@ def health_check():
 
 @app.websocket("/ws")
 async def websocket_endpoint(client_ws: WebSocket):
+    global app_services, active_user_agent
+
     await client_ws.accept()
     logger.info("Client connected.")
-
-    global app_services
 
     if not app_services or not app_services.reasoning_engine:
         logger.error("Server not fully initialized: missing services.")
@@ -101,6 +137,14 @@ async def websocket_endpoint(client_ws: WebSocket):
         app_services,
         client_ws
     )
+    manager.agent.connection_manager = manager
+
+    active_user_agent = manager.agent
+
+    logger.info(
+        f"Active user agent session captured for thread tracking: {manager.agent.conversation_state['thread_id']}"
+    )
+
     try:
         await manager.handle_connection()
     except Exception as e:
@@ -110,4 +154,4 @@ async def websocket_endpoint(client_ws: WebSocket):
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host=HOST, port=PORT)
+    uvicorn.run(app, host=HOST, port=PORT, log_config=None)
