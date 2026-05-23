@@ -7,10 +7,12 @@ questions against the Neo4j database.
 import json
 import re
 import logging
+from typing import Annotated
 
 from langchain_ollama import ChatOllama
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
+from langgraph.prebuilt import InjectedState
 
 from max_assistant.clients.neo4j_client import Neo4jClient
 from max_assistant.agent.prompts import CYPHER_GENERATION_PROMPT
@@ -25,10 +27,8 @@ class GeneralQuestionArgs(BaseModel):
         ...,
         description="A natural language question to be answered by the graph."
     )
-    user_info_json: str = Field(
-        ...,
-        description="The user's info (a JSON string) from the main graph state. This is required to resolve questions like 'my' or 'I'."
-    )
+    # The LLM will not see this in the schema. LangGraph will inject state["userinfo"] here.
+    user_info: Annotated[dict, InjectedState("userinfo")]
 
 
 class GeneralQueryTools(BaseToolProvider):
@@ -64,16 +64,17 @@ class GeneralQueryTools(BaseToolProvider):
         # Return a query that will gracefully fail
         return "RETURN 'Error: Could not parse Cypher query from LLM response'"
 
-    async def answer_general_question(self, question: str, user_info_json: str) -> str:
+    async def answer_general_question(self, question: str, user_info: dict) -> str:
         """
-        Use this tool for complex questions about relationships or entities in the graph database that CANNOT be answered
-        by other, more specific tools.
-        IMPORTANT: Do NOT use this tool for simple questions about the user's own identity, such as "what is my name?"
-        or "where do I live?". Answer those directly from the user_info context.
-        This tool translates a natural language question into a Cypher query,
-        executes it, and returns the raw JSON data.
+        UNIVERSAL FALLBACK TOOL: You MUST use this tool to answer ANY question about
+        family members, relationships, locations, addresses, or personal history if no
+        other specific tool applies. Use this for questions like "Does X have children?",
+        "Where does Y live?", or "Who are my great-grandchildren?".
         """
         logger.info(f"Tool: answer_general_question for: {question}")
+
+        # Convert the injected state dict into the string format your prompt expects
+        user_info_json = json.dumps(user_info)
 
         try:
             # 1. Get the graph schema

@@ -18,8 +18,10 @@ import json
 from typing import Any, Literal
 import uuid
 
+import tiktoken
+
 # Added SystemMessage to the LangChain imports
-from langchain_core.messages import HumanMessage, ToolMessage, AIMessage, ToolCall, RemoveMessage
+from langchain_core.messages import HumanMessage, ToolMessage, AIMessage, ToolCall, RemoveMessage, trim_messages
 from langgraph.graph import StateGraph
 from langgraph.prebuilt import ToolNode
 from langchain_ollama import ChatOllama
@@ -34,16 +36,44 @@ from max_assistant.utils.datetime_utils import current_datetime
 logger = logging.getLogger(__name__)
 
 
+
+# Initialize a fast, local tokenizer
+tokenizer = tiktoken.get_encoding("cl100k_base")
+
+
+def count_tokens(messages: list) -> int:
+    """Helper function to roughly count tokens in a message list."""
+    total_tokens = 0
+    for m in messages:
+        # Cast to string safely, as tool outputs might be complex objects
+        content = str(m.content) if m.content else ""
+        total_tokens += len(tokenizer.encode(content))
+    return total_tokens
+
+
 def prune_messages(state: GraphState) -> dict[str, Any]:
-    """
-    Node to prune the history, keeping only the last K messages.
-    """
     messages = state.get("messages", [])
-    if len(messages) > MESSAGE_PRUNING_LIMIT:
-        logger.info(f"--- Pruning messages ---")
-        messages_to_delete = messages[:-MESSAGE_PRUNING_LIMIT]
-        # Return RemoveMessage objects for the IDs you want dropped
+    if not messages:
+        return {}
+
+    # Use LangChain's smart trimmer with the real token counter
+    kept_messages = trim_messages(
+        messages,
+        max_tokens=128000,  # Your calculated safe limit based on your model
+        strategy="last",
+        token_counter=count_tokens,  # Pass the actual token counting function
+        include_system=True,
+        allow_partial=False,  # Protects the tool calls
+    )
+
+    # Compare the old list to the kept list to find what got dropped
+    kept_ids = {m.id for m in kept_messages if m.id}
+    messages_to_delete = [m for m in messages if m.id and m.id not in kept_ids]
+
+    if messages_to_delete:
+        logger.info(f"--- Pruning {len(messages_to_delete)} messages safely ---")
         return {"messages": [RemoveMessage(id=m.id) for m in messages_to_delete]}
+
     return {}
 
 
