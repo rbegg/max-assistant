@@ -22,7 +22,6 @@ from typing import List
 from fastapi import WebSocket, WebSocketDisconnect
 
 from max_assistant.agent.agent import Agent
-from max_assistant.config import QUEUE_GET_TIMEOUT
 from max_assistant.clients.stt_client import STTClient
 from max_assistant.clients.tts_client import TTSClient
 from .app_services import AppServices
@@ -44,6 +43,7 @@ class ConnectionManager:
         self.binary_input_queue = Queue()
         self.text_input_queue = Queue()
         self.client_output_queue = Queue()
+        self.external_event_queue = Queue()
 
         self._shutdown_event = asyncio.Event()
         self._tasks: List[asyncio.Task] = []
@@ -76,6 +76,13 @@ class ConnectionManager:
             await self.tts_client.close()
             logger.info("Connection handler for a client finished.")
 
+    async def submit_external_event(self, payload: dict):
+        """
+        Public API for external systems (like the reminder poller)
+        to push events into the active connection's event loop.
+        """
+        await self.external_event_queue.put(payload)
+
     async def _run_main_logic(self):
         """
         Coordinates the primary logic, including LLM warmup, and runs the
@@ -90,7 +97,8 @@ class ConnectionManager:
         # Once services are ready, start the core processing loops.
         processing_tasks = [
             asyncio.create_task(self._agent_loop()),
-            asyncio.create_task(self._text_input_handler_loop())
+            asyncio.create_task(self._text_input_handler_loop()),
+            asyncio.create_task(self._external_event_loop()),
         ]
         self._tasks.extend(processing_tasks)
 
@@ -169,21 +177,25 @@ class ConnectionManager:
         """Processes text input from the client and updates the conversation state."""
         try:
             while not self._shutdown_event.is_set():
+                # This blocks naturally until an item is available, yielding control to the event loop
+                text_data = await self.text_input_queue.get()
+
+                logger.info(f"TEXT_HANDLER: Received text from client: {text_data}")
+
                 try:
-                    text_data = await asyncio.wait_for(self.text_input_queue.get(), timeout=QUEUE_GET_TIMEOUT)
-                    logger.info(f"TEXT_HANDLER: Received text from client: {text_data}")
                     client_dict = json.loads(text_data)
                     if "username" in client_dict:
                         logger.info(f"username sent: {client_dict['username']}")
                     if "voice" in client_dict:
                         self.agent.set_voice(client_dict["voice"])
-                except asyncio.TimeoutError:
-                    # No text received, continue waiting.
-                    continue
                 except (json.JSONDecodeError, TypeError) as e:
                     logging.warning(f"Could not parse text message from client: {e}")
+                finally:
+                    # Explicitly mark the task as done to maintain queue integrity
+                    self.text_input_queue.task_done()
+
         except asyncio.CancelledError:
-            pass  # Task was cancelled, exit gracefully.
+            logger.info("Text input handler loop task cancelled.")
         except Exception as e:
             logging.error(f"Error in text input handler: {e}", exc_info=True)
             self._shutdown_event.set()
@@ -219,19 +231,56 @@ class ConnectionManager:
                 except (json.JSONDecodeError, AttributeError) as e:
                     logging.warning(f"Could not parse STT message: {stt_message_str} ({e})")
         except asyncio.CancelledError:
-            pass  # Task was cancelled.
+            pass  # Task was canceled.
         except Exception as e:
             logging.error(f"Error in agent loop: {e}", exc_info=True)
             self._shutdown_event.set()
         finally:
             logger.info("Agent loop has stopped.")
 
+
     async def _cancel_tasks(self, tasks: List[asyncio.Task]):
-        """
-        Gracefully cancels a list of asyncio tasks.
-        """
         for task in tasks:
             if not task.done():
                 task.cancel()
-        # Wait for all tasks to acknowledge cancellation.
-        await asyncio.gather(*tasks, return_exceptions=True)
+
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for res in results:
+            if isinstance(res, Exception) and not isinstance(res, asyncio.CancelledError):
+                logger.error(f"Background task raised an unhandled exception during shutdown: {res}")
+
+
+    async def _external_event_loop(self):
+        """Listens for system-generated events, processes them via the Agent, and sends to client."""
+        try:
+            while not self._shutdown_event.is_set():
+                # Wait for an external event payload from the poller
+                event_payload = await self.external_event_queue.get()
+                logger.info(f"EXTERNAL_EVENT_HANDLER: Processing event: {event_payload}")
+
+                # 1. Process the event through the LangGraph reasoning engine
+                llm_response = await self.agent.handle_push_event(event_payload)
+
+                if not llm_response:
+                    continue
+
+                # 2. Dispatch text payload to the active WebSocket
+                response_payload = {"data": llm_response, "source": "assistant", "type": "notification"}
+                await self.client_output_queue.put(json.dumps(response_payload))
+
+                # 3. Synthesize audio stream via the session's active TTS worker
+                output_audio = await self.tts_client.synthesize_speech(
+                    llm_response, self.agent.get_voice()
+                )
+
+                if output_audio:
+                    logger.info("Sending synthesized audio for background event.")
+                    await self.client_output_queue.put(output_audio)
+
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logging.error(f"Error in external event loop: {e}", exc_info=True)
+            self._shutdown_event.set()
+        finally:
+            logger.info("External event loop has stopped.")

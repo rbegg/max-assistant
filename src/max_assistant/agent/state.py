@@ -3,9 +3,10 @@
 """
 Defines the state for the langgraph graph.
 """
-from typing import TypedDict, Annotated
+from typing import Annotated
 import operator
 from langchain_core.messages import BaseMessage
+from typing_extensions import TypedDict, NotRequired
 
 
 class GraphState(TypedDict):
@@ -14,11 +15,16 @@ class GraphState(TypedDict):
 
     Attributes:
         transcribed_text: The user's transcribed text for the current turn.
-        username: The user's name.
+        userinfo: The user's cached profile and location data.
+        thread_id: Unique identifier for the conversation thread.
         messages: The full conversation history, which will be pruned.
+        voice: The current TTS voice configuration.
+        external_event: Optional payload containing background timer/reminder data.
     """
     transcribed_text: str
     userinfo: dict
     thread_id: str
     messages: Annotated[list[BaseMessage], operator.add]
     voice: str
+    external_event: NotRequired[dict]
+    is_background: NotRequired[bool]
