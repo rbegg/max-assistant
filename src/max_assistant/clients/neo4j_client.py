@@ -1,15 +1,23 @@
-# Copyright (c) 2025, Robert Begg
-# Licensed under the MIT License. See LICENSE for more details.
-from typing import cast, LiteralString, Any, Dict
-import asyncio
 import json
+import logging
+import asyncio
+import time
+from typing import cast, LiteralString, Any, Dict
 
 from neo4j import AsyncGraphDatabase, AsyncDriver
 from neo4j.exceptions import Neo4jError, DriverError, ServiceUnavailable
 
-import logging
+
 logger = logging.getLogger(__name__)
 
+
+class Neo4jClientError(Exception):
+    """Custom exception raised for errors within the Neo4jClient."""
+    pass
+
+class Neo4jCircuitBreakerError(Neo4jClientError):
+    """Raised when the circuit breaker is OPEN and fast-failing requests."""
+    pass
 
 class Neo4jClient:
     """
@@ -23,33 +31,45 @@ class Neo4jClient:
         """
         self.driver = driver
         self.database = database
-        self._schema_cache: str | None = None # Add schema cache property
+        self._schema_cache: str | None = None
+
+        # --- Circuit Breaker State ---
+        self._cb_state = "CLOSED"
+        self._cb_failures = 0
+        self._cb_failure_threshold = 3  # Open circuit after 3 consecutive failures
+        self._cb_recovery_timeout = 60.0  # Wait 60 seconds before testing recovery
+        self._cb_last_failure_time = 0.0
 
     @classmethod
     async def create(
             cls,
-            uri,
-            user,
-            password,
-            database="neo4j",
-            max_retries=5,
-            initial_delay=3,
-            backoff_factor=2
-    ):
+            uri: str,
+            user: str,
+            password: str,
+            database: str = "neo4j",
+            max_retries: int = 5,
+            initial_delay: int = 3,
+            backoff_factor: int = 2
+    ) -> "Neo4jClient":
         """
         Asynchronous factory method to create and verify a client.
         Includes retry-with-backoff logic for startup.
         """
         delay = initial_delay
 
-        # Range starts at 1 and includes max_retries
         for attempt in range(1, max_retries + 1):
             try:
-                logger.debug(
+                logger.info(
                     f"Attempt {attempt}/{max_retries}: Connecting to "
                     f"Neo4j Async Driver URI: {uri} User: {user}..."
                 )
-                driver = AsyncGraphDatabase.driver(uri, auth=(user, password))
+                driver = AsyncGraphDatabase.driver(
+                    uri,
+                    auth=(user, password),
+                    max_transaction_retry_time=3.0,  # Give up on retries after 3 seconds
+                    connection_timeout=2.0,  # Fail fast if the socket doesn't respond
+                    max_connection_lifetime=3600  # Recycle connections to avoid stale sockets
+                )
                 await driver.verify_connectivity()
 
                 logger.info("Neo4j Async Driver connected successfully.")
@@ -61,8 +81,6 @@ class Neo4jClient:
                     f"{e.__class__.__name__}: {e}"
                 )
 
-                # --- MODIFICATION 3 ---
-                # Exit condition is now simpler
                 if attempt == max_retries:
                     logger.error(f"All {max_retries} attempts failed to connect to Neo4j.")
                     raise
@@ -80,36 +98,37 @@ class Neo4jClient:
         """
         Fetches a comprehensive schema from Neo4j using the APOC library
         and caches it.
-        This is used to provide context to the LLM for Cypher generation.
+
+        Raises:
+            Neo4jClientError: If the APOC query fails, returns no data, or is restricted.
         """
-        # Return from cache if available
         if self._schema_cache:
             logger.debug("Returning cached Neo4j schema.")
             return self._schema_cache
 
+        if not self.driver:
+            raise Neo4jClientError("Cannot execute query: Neo4j Async Driver is not initialized.")
+
+        self._check_circuit()
+
         logger.info("Fetching and caching Neo4j schema using APOC...")
+
         try:
-            # --- MODIFICATION: Use the APOC procedure ---
-            # This is the most reliable way to get the schema.
-            # We use {sample: 1000} to limit the scan on large graphs.
-            # You can remove the config map for a full (slower) scan.
             schema_result = await self.driver.execute_query(
                 "CALL apoc.meta.schema({sample: 1000})",
                 database_=self.database
             )
 
-            if not schema_result.records:
-                logger.error("APOC schema query returned no records.")
-                return json.dumps({"error": "Failed to fetch schema", "message": "APOC query returned no records."})
+            self._record_success()
 
-            # apoc.meta.schema() returns a single record with a 'value' key
-            # which is a large dictionary.
+            if not schema_result.records:
+                raise Neo4jClientError("APOC schema query executed but returned no records.")
+
             apoc_schema = schema_result.records[0].data().get("value", {})
             if not apoc_schema:
-                logger.error("APOC schema query returned no 'value' in record.")
-                return json.dumps({"error": "Failed to fetch schema", "message": "APOC query returned empty value."})
+                raise Neo4jClientError("APOC schema query returned an empty 'value' payload.")
 
-            # --- Parsing Logic for apoc.meta.schema() output ---
+            # --- Parsing Logic ---
             node_labels = []
             node_properties = {}
             relationship_types = []
@@ -122,14 +141,12 @@ class Neo4jClient:
                 if item_type == "node":
                     node_labels.append(key)
 
-                    # Get node properties
                     props = {}
                     for prop_name, prop_data in info.get("properties", {}).items():
                         props[prop_name] = prop_data.get("type", "UNKNOWN")
                     if props:
                         node_properties[key] = [f"{k} ({v})" for k, v in props.items()]
 
-                    # Get relationship structures from the node
                     for rel_name, rel_data in info.get("relationships", {}).items():
                         direction = rel_data.get("direction", "out")
                         target_labels = rel_data.get("labels", [])
@@ -143,14 +160,12 @@ class Neo4jClient:
                 elif item_type == "relationship":
                     relationship_types.append(key)
 
-                    # Get relationship properties
                     props = {}
                     for prop_name, prop_data in info.get("properties", {}).items():
                         props[prop_name] = prop_data.get("type", "UNKNOWN")
                     if props:
                         relationship_properties[key] = [f"{k} ({v})" for k, v in props.items()]
 
-            # Format for the LLM
             schema = {
                 "node_labels": sorted(list(set(node_labels))),
                 "node_properties": node_properties,
@@ -159,38 +174,82 @@ class Neo4jClient:
                 "relationship_structure": sorted(list(set(relationship_structure)))
             }
 
-            # Cache and return the JSON string
             self._schema_cache = json.dumps(schema, indent=2)
             return self._schema_cache
 
+
+        except ServiceUnavailable as e:
+            # Expected network drop (e.g., container offline, DNS failure).
+            # Record failure, log the string, but suppress the traceback.
+            self._record_failure()
+            logger.error(f"Database connection offline: {e}")
+            raise Neo4jClientError(f"Connection lost while executing query: {str(e)}") from e
+
+        except (DriverError, OSError) as e:
+            # Unexpected driver or OS issue.
+            # Record failure, and KEEP the traceback for debugging.
+            self._record_failure()
+            logger.error(f"Unexpected network/driver execution failed: {e}", exc_info=True)
+            raise Neo4jClientError(f"Unexpected connectivity error: {str(e)}") from e
+
         except Neo4jError as e:
             if "There is no procedure with the name `apoc.meta.schema`" in str(e.message):
-                logger.error("APOC procedures not found. Please ensure APOC is installed on Neo4j.")
-                return json.dumps({"error": "APOC not installed", "message": str(e.message)})
+                raise Neo4jClientError("APOC not installed. Ensure APOC plugins are present in Neo4j.") from e
             if "is restricted" in str(e.message):
-                logger.error(
-                    "APOC procedure is restricted. Add 'apoc.meta.schema' to dbms.security.procedures.allowlist in neo4j.conf")
-                return json.dumps({"error": "APOC procedure restricted", "message": str(e.message)})
-            logger.error(f"Failed to fetch Neo4j schema: {e}", exc_info=True)
-            return json.dumps({"error": e.__class__.__name__, "message": str(e.message)})
+                raise Neo4jClientError(
+                    "APOC restricted. Add 'apoc.meta.schema' to dbms.security.procedures.allowlist in neo4j.conf") from e
+
+            logger.error(f"Neo4jError during schema fetch: {e}", exc_info=True)
+            raise Neo4jClientError(f"Database error while fetching schema: {e.message}") from e
 
         except Exception as e:
-            logger.error(f"Failed to fetch Neo4j schema: {e}", exc_info=True)
-            return json.dumps({"error": "Failed to fetch schema", "message": str(e)})
+            logger.error(f"Unexpected error fetching Neo4j schema: {e}", exc_info=True)
+            raise Neo4jClientError(f"Unexpected error fetching schema: {str(e)}") from e
 
+    def _check_circuit(self):
+        """Verifies if a request is allowed to proceed."""
+        if self._cb_state == "CLOSED":
+            return
 
-    async def close(self):
-        """Asynchronously closes the driver connection."""
-        if self.driver:
-            await self.driver.close()
-            logger.info("Neo4j Async Driver connection closed.")
+        if self._cb_state == "OPEN":
+            elapsed = time.monotonic() - self._cb_last_failure_time
+            if elapsed > self._cb_recovery_timeout:
+                logger.info("Circuit Breaker: Cooldown elapsed. Entering HALF-OPEN state.")
+                self._cb_state = "HALF-OPEN"
+                return  # Allow one request through to test
+            else:
+                remaining = int(self._cb_recovery_timeout - elapsed)
+                raise Neo4jCircuitBreakerError(f"Database circuit is OPEN. Fast-failing. Try again in {remaining}s.")
+
+    def _record_success(self):
+        """Resets the circuit breaker on a successful database operation."""
+        if self._cb_state != "CLOSED":
+            logger.info("Circuit Breaker: Connection restored. Circuit CLOSED.")
+            self._cb_state = "CLOSED"
+        self._cb_failures = 0
+
+    def _record_failure(self):
+        """Records a failure and potentially opens the circuit."""
+        self._cb_failures += 1
+        self._cb_last_failure_time = time.monotonic()
+
+        if self._cb_state == "HALF-OPEN" or self._cb_failures >= self._cb_failure_threshold:
+            if self._cb_state != "OPEN":
+                logger.warning(f"Circuit Breaker: Threshold reached ({self._cb_failures} failures). Circuit OPENED.")
+            self._cb_state = "OPEN"
 
     async def execute_query(self, query: str, params: dict[str, Any] | None = None) -> Dict[str, Any]:
         """
         Executes a query using the native async driver.
+
+        Raises:
+            Neo4jClientError: If the driver is disconnected or the query fails.
         """
         if not self.driver:
-            return{"error": "Neo4j is not connected"}
+            raise Neo4jClientError("Cannot execute query: Neo4j Async Driver is not initialized.")
+
+        # Evaluate Circuit Breaker Status
+        self._check_circuit()
 
         logger.debug(f"Executing query: {query}")
 
@@ -201,12 +260,13 @@ class Neo4jClient:
                 database_=self.database
             )
 
+            # Record Success
+            self._record_success()
+
             records = result.records
             summary = result.summary
-
             response: Dict[str, Any] = {"data": [record.data() for record in records]}
 
-            # Include summary data if there are any database updates
             counters = summary.counters
             if (counters.nodes_created > 0 or
                     counters.nodes_deleted > 0 or
@@ -224,9 +284,32 @@ class Neo4jClient:
             logger.debug(f"Query returned: {response}")
             return response
 
-        # --- 4. Query failed ---
-        except (Neo4jError, DriverError) as e:
-            return {"error": e.__class__.__name__, "message": str(e)}
-        except Exception as e:
-            return {"error": e.__class__.__name__, "message": str(e)}
+        except ServiceUnavailable as e:
+            # Expected network drop (e.g., container offline, DNS failure).
+            # Record failure, log the string, but suppress the traceback.
+            self._record_failure()
+            logger.error(f"Database connection offline: {e}")
+            raise Neo4jClientError(f"Connection lost while executing query: {str(e)}") from e
 
+        except (DriverError, OSError) as e:
+            # Unexpected driver or OS issue.
+            # Record failure, and KEEP the traceback for debugging.
+            self._record_failure()
+            logger.error(f"Unexpected network/driver execution failed: {e}", exc_info=True)
+            raise Neo4jClientError(f"Unexpected connectivity error: {str(e)}") from e
+
+        except Exception as e:
+            logger.error(f"Unexpected error executing query: {e}", exc_info=True)
+            raise Neo4jClientError(f"Unexpected error executing Cypher query: {str(e)}") from e
+
+    async def close(self):
+        """Asynchronously closes the driver connection."""
+        if self.driver:
+            await self.driver.close()
+            logger.info("Neo4j Async Driver connection closed.")
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self.close()

@@ -11,6 +11,7 @@ import logging
 from langchain_core.tools import StructuredTool
 from max_assistant.tools.registry import BaseToolProvider
 from max_assistant.models.reminder_models import ScheduleReminderArgs
+from max_assistant.clients.neo4j_client import Neo4jClientError, Neo4jCircuitBreakerError
 
 
 logger = logging.getLogger(__name__)
@@ -28,30 +29,17 @@ class ReminderTools(BaseToolProvider):
     async def schedule_reminder(self, message: str, delay_minutes: float) -> str:
         """
         Use this tool to schedule a reminder message after a certain number of minutes.
-        Args:
-            message: The reminder message to be scheduled.
-            delay_minutes: The duration in minutes after which the reminder should be triggered.
-        Examples: 'Remind me to go for lunch in 10 minutes', 'in 15 minutes remind me to call mom'.
-        If a time is provided, get the current time and convert to minutes.
-        Example: 'remind me to go for lunch at 11:45'
-        Saves the task with a PENDING status into the Neo4j graph database.
         """
         logger.info(f"Tool: schedule_reminder - message='{message}', delay={delay_minutes}m")
 
         try:
-            # 1. Calculate the absolute execution time in the local timezone
+            # Calculate the absolute execution time
             due_datetime = datetime.now() + timedelta(minutes=delay_minutes)
             due_iso = due_datetime.isoformat()
 
-            # 2. Persist the task node and map it to the primary user
             query = """
-                // 1. Match the existing user
-                MATCH (u:User ) // {id: $userId} Recommended to anchor your user with an ID or property
-                
-                // 2. Initialize the datetime variable from the parameter
+                MATCH (u:User) 
                 WITH u, datetime($due_time) AS d
-                
-                // 3. Create the new Task
                 CREATE (t:Task {
                     id: randomUUID(),
                     text: $text,
@@ -59,18 +47,11 @@ class ReminderTools(BaseToolProvider):
                     type: 'REMINDER',
                     status: 'PENDING'
                 })
-                
-                // 4. Build/Merge the Time Tree step-by-step
                 MERGE (u)-[:HAS_YEAR]->(y:Year {year: d.year})
                 MERGE (y)-[:HAS_MONTH]->(m:Month {month: d.month, year: d.year})
                 ON CREATE SET m.name = format(d, 'MMM') 
-                
                 MERGE (m)-[:HAS_DAY]->(day:Day {day: d.day, month: d.month, year: d.year})
-                
-                // 5. Link the Task to both the Day node and the User node
                 MERGE (day)-[:HAS_TASK]->(t)
-                
-                // 6. Return the newly created task ID
                 RETURN t.id AS task_id
             """
             params = {
@@ -80,20 +61,31 @@ class ReminderTools(BaseToolProvider):
 
             result = await self.db_client.execute_query(query, params)
 
-            if "error" in result:
-                logger.error(f"Neo4j write failed for reminder: {result['error']}")
-                return json.dumps(result)
-
             return json.dumps({
                 "success": True,
                 "message": f"Successfully scheduled reminder: '{message}' for {delay_minutes} minutes from now.",
                 "due_time": due_iso
             }, indent=2)
 
+        except Neo4jCircuitBreakerError as e:
+            logger.warning(f"Circuit Breaker blocked reminder scheduling: {e}")
+            return json.dumps({
+                "error": "Database_Offline_Circuit_Open",
+                "instruction": "The system database is currently offline. The reminder could NOT be saved. Apologize and inform the user.",
+                "details": str(e)
+            })
+
+        except Neo4jClientError as e:
+            logger.error(f"Database error in schedule_reminder: {e}")
+            return json.dumps({
+                "error": "Database_Unavailable",
+                "instruction": "The database connection failed abruptly. Apologize to the user and inform them that the reminder could not be saved right now.",
+                "details": str(e)
+            })
+
         except Exception as e:
             logger.error(f"Unexpected error in schedule_reminder tool: {e}")
             return json.dumps({"error": "Failed to schedule reminder", "details": str(e)})
-
 
     def get_tools(self) -> list:
         """
@@ -112,63 +104,61 @@ class ReminderTools(BaseToolProvider):
             )
         ]
 
-
     async def start_reminder_poller_dynamic(self, get_agent_fn, poll_interval_seconds: int = 20):
         """
-        A continuous, non-blocking background loop that polls Neo4j for pending reminders
-        anchored specifically to the current date's time-tree node branch.
+        A continuous, non-blocking background loop that polls Neo4j for pending reminders.
         """
         logger.info("Background reminder poller service activated via localized date-tree matching.")
 
-        now: str
-
-        # This optimized query starts by grabbing today's exact date metrics.
         check_query = """
-                        WITH datetime($now) AS now
-                        MATCH (t:Task {status: 'PENDING', type: 'REMINDER'})
-                        WHERE t.due_time <= now
-                        SET t.status = 'COMPLETED'
-                        RETURN t.text AS text, t.id AS id
+                      WITH datetime($now) AS now
+                          MATCH (t:Task {status: 'PENDING', type : 'REMINDER'})
+                      WHERE t.due_time <= now
+                      SET t.status = 'COMPLETED'
+                          RETURN t.text AS text, t.id AS id
                       """
 
         while True:
             try:
-                # Resolve the active conversational agent processing instance
                 agent = get_agent_fn()
-
-                # If no user is currently connected to the websocket endpoint, wait for connection
                 if not agent:
                     await asyncio.sleep(poll_interval_seconds)
                     continue
 
                 params = {"now": datetime.now().isoformat()}
-                result = await self.db_client.execute_query(check_query, params )
 
-                if "error" in result:
-                    logger.error(f"Poller date-tree query encountered an error: {result['error']}")
-                else:
-                    tasks_due = result.get("data", [])
-                    for task in tasks_due:
-                        reminder_text = task.get("text")
-                        task_id = task.get("id")
+                # The execution is now safely inside a try/except block
+                result = await self.db_client.execute_query(check_query, params)
 
-                        logger.info(f"Poller detected matured timer [{task_id}] on today's tree: '{reminder_text}'")
+                tasks_due = result.get("data", [])
+                for task in tasks_due:
+                    reminder_text = task.get("text")
+                    task_id = task.get("id")
 
-                        payload = {
-                            "task_id": task_id,
-                            "text": reminder_text
-                        }
+                    logger.info(f"Poller detected matured timer [{task_id}]: '{reminder_text}'")
 
-                        if agent and agent.connection_manager:
-                            # Delegate the event to the active connection's event loop
-                            await agent.connection_manager.submit_external_event(payload)
-                        else:
-                            logger.warning("Reminder triggered, but no active connection is available.")
+                    payload = {"task_id": task_id, "text": reminder_text}
+
+                    if agent and agent.connection_manager:
+                        await agent.connection_manager.submit_external_event(payload)
+                    else:
+                        logger.warning("Reminder triggered, but no active connection is available.")
+
+            except Neo4jCircuitBreakerError:
+                # SILENT CATCH: The DB is offline. Log it at DEBUG level so we don't spam
+                # the terminal every 20 seconds, and just wait for the next tick.
+                logger.debug("Reminder poller paused: Database circuit is OPEN.")
+
+            except Neo4jClientError as e:
+                logger.error(f"Database error in reminder poller: {e}. Backing off for 60 seconds.")
+                await asyncio.sleep(60)  # Extended backoff to prevent log spam
+                continue  # Skip the standard 20-second sleep at the bottom of the loop
 
             except asyncio.CancelledError:
                 logger.info("Poller loop received explicit cancellation signal. Shutting down gracefully.")
                 raise
+
             except Exception as e:
-                logger.error(f"Unexpected exception tracked inside reminder poller execution: {e}", exc_info=True)
+                logger.error(f"Unexpected exception in reminder poller: {e}", exc_info=True)
 
             await asyncio.sleep(poll_interval_seconds)

@@ -31,47 +31,6 @@ class ScheduleTools(BaseToolProvider):
         super().__init__(db_client, llm)
         logger.info("PersonTools initialized with a Neo4j client.")
 
-
-    async def _query_and_validate_nodes(
-            self,
-            query: str,
-            params: dict,
-            model_class: Type[BaseModel],
-            result_key: str
-    ) -> str:
-        """
-        Private helper to execute a query, validate results against a
-        Pydantic model, and return a JSON string.
-        """
-        logger.debug(f"Executing query with params: {params} for model: {model_class.__name__}")
-        result = await self.db_client.execute_query(query, params)
-
-        # --- Pydantic Validation Step ---
-        if "error" in result:
-            return json.dumps(result)
-
-        try:
-            # Generic: extract nodes using the provided result_key
-            raw_nodes = [item[result_key] for item in result.get("data", [])]
-
-            # Generic: validate against the provided model_class
-            validated_nodes = [model_class.model_validate(node) for node in raw_nodes]
-
-            # Convert validated models to JSON
-            return json.dumps([node.model_dump(mode='json') for node in validated_nodes], indent=2)
-
-        except ValidationError as e:
-            logger.error(f"Validation error for {model_class.__name__}: {e.errors()}")
-            return json.dumps({"error": "Data validation failed", "details": e.errors()})
-        except KeyError:
-            logger.error(f"Validation: Unexpected data structure from DB. Expected key '{result_key}'.")
-            return json.dumps({"error": "Data parsing failed",
-                               "details": f"Unexpected data structure from DB. Missing key: {result_key}"})
-        except Exception as e:
-            logger.error(f"Unexpected error: {e}")
-            return json.dumps({"error": "Data parsing failed", "details": "Unexpected error."})
-
-
     async def get_appointments_for_date(self, target_date: str) -> str:
         """
         Use this tool if the user asks specifically for 'appointments'
@@ -224,9 +183,7 @@ class ScheduleTools(BaseToolProvider):
                 RETURN a.id AS new_appointment_id
                 """
 
-        # The client returns a dict, so we just dump it to a string for the LLM
-        result = await self.db_client.execute_query(query, params)
-        return json.dumps(result, indent=2)
+        return await self._safe_execute_query(query, params)
 
 
     async def get_activities_info(self) -> str:
