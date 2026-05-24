@@ -126,6 +126,15 @@ class PersonTools(BaseToolProvider):
             first_name: Optional[str] = None,
             last_name: Optional[str] = None
     ) -> str:
+        """
+        Finds a person, family member, friend, or support contact by their first name,
+        last name, or both. It returns a list of potential matches with all attributes,
+        including phone number, email, notes, and address.
+        AND a 'relationship' field describing how they are related to the user.
+        At least one name must be provided. Case-insensitive.
+        """
+
+        logger.info(f"Tool: find_person_by_name: fn={first_name}, ln={last_name}")
 
         query = """
             MATCH (p:Person|Family|Friend|Support)
@@ -261,7 +270,7 @@ class PersonTools(BaseToolProvider):
             return json.dumps({"error": "Internal_Error", "details": str(e)})
 
 
-    async def get_user_info_internal(self) -> Dict[str, Any]:
+    async def get_user_info_internal(self, username: str) -> Dict[str, Any]:
         """
         Internal method to fetch user and location info.
         Returns a dictionary, not a JSON string.
@@ -270,13 +279,15 @@ class PersonTools(BaseToolProvider):
 
         query = """
             MATCH (u:User)
+            where u.userName = $username
             OPTIONAL MATCH (u)-[:LIVES_AT]->(l:Location)
             RETURN properties(u) AS user, properties(l) AS location
             LIMIT 1
             """
+        params = {"username": username}
 
         try:
-            result = await self.db_client.execute_query(query, {})
+            result = await self.db_client.execute_query(query, params)
 
             if not result.get("data"):
                 return {"error": "User not found", "details": "No :User node was found in the graph."}
@@ -300,7 +311,7 @@ class PersonTools(BaseToolProvider):
 
         except Neo4jCircuitBreakerError as e:
             logger.warning(f"Circuit Breaker blocked get get_user_info_internal")
-            return {}
+            return {"error": "Database_Unavailable", "details": str(e)}
         except Neo4jClientError as e:
             logger.error(f"Database error in get_user_info_internal: {e}")
             return {"error": "Database_Unavailable", "details": str(e)}
@@ -310,18 +321,6 @@ class PersonTools(BaseToolProvider):
         except Exception as e:
             logger.error(f"Unexpected error in get_user_info: {e}")
             return {"error": "Data parsing failed", "details": str(e)}
-
-
-    async def get_user_info(self) -> str:
-        """
-        Fetches the primary User node and their LIVES_AT location.
-        It takes no arguments and assumes a single User node in the graph.
-        Returns the user's properties and their location's properties as a JSON string.
-        This data is cached in the state context Userinfo, use that data instead of this tool.
-        """
-        output_dict = await self.get_user_info_internal()
-        return json.dumps(output_dict, indent=2, default=str)
-
 
     def get_tools(self) -> list:
         """
@@ -349,11 +348,11 @@ class PersonTools(BaseToolProvider):
             #     description=self.get_relationship_to_user.__doc__,
             #     args_schema=GetRelationshipArgs
             # ),
-            StructuredTool.from_function(
-                func=None,
-                coroutine=self.get_user_info,
-                name="get_user_info",
-                description=self.get_user_info.__doc__,
-                args_schema=GetUserInfoArgs
-            ),
+            # StructuredTool.from_function(
+            #     func=None,
+            #     coroutine=self.get_user_info,
+            #     name="get_user_info",
+            #     description=self.get_user_info.__doc__,
+            #     args_schema=GetUserInfoArgs
+            # ),
         ]

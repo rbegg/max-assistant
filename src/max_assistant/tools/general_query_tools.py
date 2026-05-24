@@ -107,7 +107,7 @@ class GeneralQueryTools(BaseToolProvider):
             result = await self.db_client.execute_query(cypher_query, params={})
 
             # 4. Return the raw JSON string
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, default=str)
 
         except Neo4jCircuitBreakerError as e:
             logger.warning(f"Circuit Breaker blocked general query: {e}")
