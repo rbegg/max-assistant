@@ -25,6 +25,7 @@ from max_assistant.agent.agent import Agent
 from max_assistant.clients.stt_client import STTClient
 from max_assistant.clients.tts_client import TTSClient
 from .app_services import AppServices
+from .tools import PersonTools
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,7 @@ class ConnectionManager:
 
     def __init__(self, app_services: AppServices, websocket: WebSocket):
         self.ws = websocket
-        self.agent = Agent(app_services.reasoning_engine, app_services.user_info)
+        self.agent = Agent(app_services.reasoning_engine, {})
         self.stt_client = STTClient()
         self.tts_client = TTSClient()
         self.app_services = app_services
@@ -185,9 +186,31 @@ class ConnectionManager:
                 try:
                     client_dict = json.loads(text_data)
                     if "username" in client_dict:
-                        logger.info(f"username sent: {client_dict['username']}")
+                        target_username = client_dict['username']
+                        logger.info(f"username sent: {target_username}")
+
+                        person_tools = PersonTools(self.app_services.db_client)
+                        user_data = await person_tools.get_user_info_internal(target_username)
+
+                        if "error" in user_data:
+                            logging.error(f"Could not find user {target_username} in DB. Closing connection.")
+                            # Optionally notify the client before closing
+                            error_payload = {"data": "User not found in database. Connection closed.",
+                                             "source": "system"}
+                            await self.ws.send_text(json.dumps(error_payload))
+
+                            # Close the websocket with a policy violation code (1008)
+                            await self.ws.close(code=1008, reason="User not found")
+
+                            # Trigger the shutdown event for other tasks and exit this loop
+                            self._shutdown_event.set()
+                            break
+                        else:
+                            self.agent.set_user_info(user_data)
+
                     if "voice" in client_dict:
                         self.agent.set_voice(client_dict["voice"])
+
                 except (json.JSONDecodeError, TypeError) as e:
                     logging.warning(f"Could not parse text message from client: {e}")
                 finally:

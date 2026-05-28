@@ -40,14 +40,12 @@ class AppServices:
             db_client: Neo4jClient,
             llm: ChatOllama,
             tool_registry: ToolRegistry,
-            user_info: Dict[str, Any],
             reasoning_engine: ReasoningEngine,
             llm_ready_event: asyncio.Event
     ):
         self.db_client = db_client
         self.llm = llm
         self.tool_registry = tool_registry
-        self.user_info = user_info
         self.reasoning_engine = reasoning_engine
         self.llm_ready_event = llm_ready_event
 
@@ -66,8 +64,7 @@ class AppServices:
             db_client, llm = await cls._initialize_clients(llm_ready_event)
 
             # --- 2. Fetch User Info ---
-            # This requires the db_client to be ready.
-            user_info = await cls._fetch_user_info(db_client)
+            # Moved to agent/thread initialization
 
             # --- 3. Initialize and Populate Tool Registry ---
             tool_registry = cls._initialize_tool_registry(db_client, llm)
@@ -81,7 +78,6 @@ class AppServices:
                 db_client=db_client,
                 llm=llm,
                 tool_registry=tool_registry,
-                user_info=user_info,
                 reasoning_engine=reasoning_engine,
                 llm_ready_event=llm_ready_event,
             )
@@ -115,17 +111,6 @@ class AppServices:
 
         logger.info("Successfully initialized Neo4j client and LLM instance.")
         return db_client, llm
-
-    @staticmethod
-    async def _fetch_user_info(db_client: Neo4jClient) -> Dict[str, Any]:
-        """Fetches essential user information on startup."""
-        logger.info("Fetching user info...")
-        # We temporarily create PersonTools to fetch this on startup.
-        # This is acceptable as it's a one-off operation.
-        person_tools_instance = PersonTools(db_client)
-        user_info = await person_tools_instance.get_user_info_internal()
-        logger.info("User info fetched successfully.")
-        return user_info
 
     @staticmethod
     def _initialize_tool_registry(db_client: Neo4jClient, llm: ChatOllama) -> ToolRegistry:

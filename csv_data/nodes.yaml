@@ -22,6 +22,7 @@
     MERGE (p:Person:User {id: toInteger(row.id)})
     SET p.firstName = row.firstName, 
         p.lastName = row.lastName, 
+        p.userName = row.userName,
         p.gender = row.gender,
         p.dob = CASE WHEN row.dob IS NOT NULL AND row.dob <> '' THEN date(row.dob) ELSE null END,
         p.dod = CASE WHEN row.dod IS NOT NULL AND row.dod <> '' THEN date(row.dod) ELSE null END,

@@ -11,7 +11,7 @@ from langchain_ollama import ChatOllama
 from langchain_core.tools import StructuredTool
 from pydantic import ValidationError, BaseModel
 
-from max_assistant.clients.neo4j_client import Neo4jClient
+from max_assistant.clients.neo4j_client import Neo4jClient, Neo4jClientError, Neo4jCircuitBreakerError
 from max_assistant.models.person_models import (
     PersonDetails,
     FindPersonByNameArgs,
@@ -38,46 +38,6 @@ class PersonTools(BaseToolProvider):
         super().__init__(db_client, llm)
         logger.info("PersonTools initialized with a Neo4j client.")
 
-    async def _query_and_validate_nodes(
-            self,
-            query: str,
-            params: dict,
-            model_class: Type[BaseModel],
-            result_key: str
-    ) -> str:
-        """
-        Private helper to execute a query, validate results against a
-        Pydantic model, and return a JSON string.
-        """
-        logger.debug(f"Executing query with params: {params} for model: {model_class.__name__}")
-        result = await self.db_client.execute_query(query, params)
-
-        if "error" in result:
-            return json.dumps(result)
-
-        try:
-            raw_nodes = [item[result_key] for item in result.get("data", [])]
-            validated_nodes = [model_class.model_validate(node) for node in raw_nodes]
-            return json.dumps(
-                [node.model_dump(mode='json') for node in validated_nodes],
-                indent=2,
-                default=str
-            )
-        except ValidationError as e:
-            logger.error(f"Validation error for {model_class.__name__}: {e.errors()}")
-            return json.dumps(
-                {"error": "Data validation failed", "details": e.errors()},
-                default=str
-            )
-        except KeyError:
-            logger.error(f"Validation: Unexpected data structure from DB. Expected key '{result_key}'.")
-            return json.dumps({"error": "Data parsing failed",
-                               "details": f"Unexpected data structure from DB. Missing key: {result_key}"})
-        except Exception as e:
-            logger.error(f"Unexpected error: {e}")
-            return json.dumps({"error": "Data parsing failed", "details": str(e)})
-
-    # --- NEW: REUSABLE RELATIONSHIP HELPERS ---
 
     def _get_relationship_description(self, path_data: Dict[str, Any]) -> str:
         """
@@ -131,33 +91,35 @@ class PersonTools(BaseToolProvider):
             ORDER BY length(path) ASC
             LIMIT 1
             """
-        result = await self.db_client.execute_query(family_query, params)
-        if "error" in result:
-            logger.warning(f"Family path query failed: {result['error']}")
+        try:
+            result = await self.db_client.execute_query(family_query, params)
+            if result.get("data"):
+                logger.debug(f"Found family path for id={person_id}")
+                return result["data"][0]
+
+            # If no family path, check for other relationships
+            other_query = """
+                MATCH (u:User), (p {id: $person_id})
+                MATCH path = shortestPath((u)-[r:FRIEND_OF|SUPPORTED_BY|LIVES_WITH*1..3]-(p))
+                RETURN [r IN relationships(path) | type(r)] AS rel_types, p.gender as gender
+                ORDER BY length(path) ASC
+                LIMIT 1
+                """
+            result = await self.db_client.execute_query(other_query, params)
+            if result.get("data"):
+                logger.debug(f"Found other path for id={person_id}")
+                return result["data"][0]
+
+            logger.debug(f"No path found for id={person_id}")
             return None
-        if result.get("data"):
-            logger.debug(f"Found family path for id={person_id}")
-            return result["data"][0]
 
-        # If no family path, check for other relationships
-        other_query = """
-            MATCH (u:User), (p {id: $person_id})
-            MATCH path = shortestPath((u)-[r:FRIEND_OF|SUPPORTED_BY|LIVES_WITH*1..3]-(p))
-            RETURN [r IN relationships(path) | type(r)] AS rel_types, p.gender as gender
-            ORDER BY length(path) ASC
-            LIMIT 1
-            """
-        result = await self.db_client.execute_query(other_query, params)
-        if "error" in result:
-            logger.warning(f"Other path query failed: {result['error']}")
+        except Neo4jCircuitBreakerError as e:
+            logger.warning(f"Circuit Breaker blocked relationship path search for id={person_id}.")
             return None
-        if result.get("data"):
-            logger.debug(f"Found other path for id={person_id}")
-            return result["data"][0]
 
-        logger.debug(f"No path found for id={person_id}")
-        return None
-
+        except Neo4jClientError as e:
+            logger.warning(f"Database error while searching for relationship path: {e}")
+            return None
 
     async def find_person_by_name(
             self,
@@ -171,10 +133,8 @@ class PersonTools(BaseToolProvider):
         AND a 'relationship' field describing how they are related to the user.
         At least one name must be provided. Case-insensitive.
         """
-        logger.info(f"Tool: find_person_by_name: fn={first_name}, ln={last_name}")
 
-        if not first_name and not last_name:
-            return json.dumps({"error": "Search failed", "details": "You must provide at least a first or last name."})
+        logger.info(f"Tool: find_person_by_name: fn={first_name}, ln={last_name}")
 
         query = """
             MATCH (p:Person|Family|Friend|Support)
@@ -188,29 +148,22 @@ class PersonTools(BaseToolProvider):
             "last_name": last_name.lower() if last_name else None
         }
 
-        result = await self.db_client.execute_query(query, params)
-
-        if "error" in result:
-            return json.dumps(result)
-
         try:
+            result = await self.db_client.execute_query(query, params)
+
             validated_results = []
             for item in result.get("data", []):
                 person_props = item.get("person")
                 person_labels = item.get("labels")
 
                 if person_props:
-                    # 1. Validate the person
                     validated_person = PersonDetails.model_validate(person_props)
-
-                    # 2. Find their relationship to the user using the new helpers
                     person_id = validated_person.id
-                    path_data = await self._find_relationship_path(person_id)
-                    relationship_desc = "unknown"  # Default
-                    if path_data:
-                        relationship_desc = self._get_relationship_description(path_data)
 
-                    # 3. Add the new 'relationship' field to the output
+                    # _find_relationship_path now safely handles DB errors internally
+                    path_data = await self._find_relationship_path(person_id)
+                    relationship_desc = self._get_relationship_description(path_data) if path_data else "unknown"
+
                     validated_results.append({
                         "person": validated_person.model_dump(mode='json'),
                         "labels": person_labels,
@@ -219,12 +172,20 @@ class PersonTools(BaseToolProvider):
 
             return json.dumps(validated_results, indent=2, default=str)
 
+        except Neo4jCircuitBreakerError as e:
+            logger.warning(f"Circuit Breaker blocked find_person_by_name query: {e}")
+            return json.dumps({
+                "error": "Database_Offline_Circuit_Open",
+                "instruction": "The system database is currently offline. Do not attempt further queries. Inform the user you cannot access their data right now.",
+                "details": str(e)
+            })
+        except Neo4jClientError as e:
+            logger.error(f"Database error in find_person_by_name: {e}")
+            return json.dumps({"error": "Database_Unavailable", "message": str(e)})
+
         except ValidationError as e:
             logger.error(f"Validation error for PersonDetails: {e.errors()}")
-            return json.dumps(
-                {"error": "Data validation failed", "details": e.errors()},
-                default=str
-            )
+            return json.dumps({"error": "Data validation failed", "details": e.errors()}, default=str)
         except Exception as e:
             logger.error(f"Unexpected error: {e}")
             return json.dumps({"error": "Data parsing failed", "details": str(e)})
@@ -255,17 +216,8 @@ class PersonTools(BaseToolProvider):
 
 
     async def get_relationship_to_user(self, first_name: str, last_name: str) -> str:
-        """
-        Use this tool ONLY when the user provides a full name and asks
-        for their relationship (e.g., "Who is Jane Doe?").
-        It returns a description of their relationship to the user (e.g., 'friend', 'doctor').
+        # ... [keep logging logic] ...
 
-        DO NOT use this tool for general questions like 'who is my husband' or 'who are my parents'.
-        Use the specific family_tools (like get_my_spouse) for those queries.
-        """
-        logger.info(f"Tool: get_relationship_to_user for {first_name} {last_name}")
-
-        # 1. First, find the person's ID.
         find_query = """
             MATCH (p:Person|Family|Friend|Support)
             WHERE toLower(p.firstName) = $first_name AND toLower(p.lastName) = $last_name
@@ -276,35 +228,49 @@ class PersonTools(BaseToolProvider):
             "first_name": first_name.lower(),
             "last_name": last_name.lower()
         }
-        find_result = await self.db_client.execute_query(find_query, params)
 
-        if "error" in find_result:
-            return json.dumps(find_result)
-        if not find_result.get("data"):
-            return json.dumps({"error": "Person not found", "details": "No person found with that name."})
+        try:
+            find_result = await self.db_client.execute_query(find_query, params)
 
-        person_id = find_result["data"][0].get("person_id")
-        if not person_id:
-            return json.dumps(
-                {"error": "Data parsing failed", "details": "Person found, but they have no 'id' property."})
+            if not find_result.get("data"):
+                return json.dumps({"error": "Person not found", "details": "No person found with that name."})
 
-        # 2. Now, find the path using the ID
-        path_data = await self._find_relationship_path(person_id)
+            person_id = find_result["data"][0].get("person_id")
+            if not person_id:
+                return json.dumps(
+                    {"error": "Data parsing failed", "details": "Person found, but they have no 'id' property."})
 
-        if not path_data:
-            return json.dumps(
-                {"error": "No relationship found", "details": "No relationship path was found in the graph."})
+            # 2. Now, find the path using the ID
+            path_data = await self._find_relationship_path(person_id)
 
-        # 3. Process the path
-        description = self._get_relationship_description(path_data)
+            if not path_data:
+                return json.dumps(
+                    {"error": "No relationship found", "details": "No relationship path was found in the graph."})
 
-        return json.dumps({
-            "relationship": description,
-            "path_length": len(path_data.get('rel_types', []))
-        }, indent=2)
+            # 3. Process the path
+            description = self._get_relationship_description(path_data)
+
+            return json.dumps({
+                "relationship": description,
+                "path_length": len(path_data.get('rel_types', []))
+            }, indent=2)
+
+        except Neo4jCircuitBreakerError as e:
+            logger.warning(f"Circuit Breaker blocked get_relationship_to_user query: {e}")
+            return json.dumps({
+                "error": "Database_Offline_Circuit_Open",
+                "instruction": "The system database is currently offline. Do not attempt further queries. Inform the user you cannot access their data right now.",
+                "details": str(e)
+            })
+        except Neo4jClientError as e:
+            logger.error(f"Database error in get_relationship_to_user: {e}")
+            return json.dumps({"error": "Database_Unavailable", "message": str(e)})
+        except Exception as e:
+            logger.error(f"Unexpected error in get_relationship_to_user: {e}")
+            return json.dumps({"error": "Internal_Error", "details": str(e)})
 
 
-    async def get_user_info_internal(self) -> Dict[str, Any]:
+    async def get_user_info_internal(self, username: str) -> Dict[str, Any]:
         """
         Internal method to fetch user and location info.
         Returns a dictionary, not a JSON string.
@@ -313,18 +279,19 @@ class PersonTools(BaseToolProvider):
 
         query = """
             MATCH (u:User)
+            where u.userName = $username
             OPTIONAL MATCH (u)-[:LIVES_AT]->(l:Location)
             RETURN properties(u) AS user, properties(l) AS location
             LIMIT 1
             """
-        result = await self.db_client.execute_query(query, {})
-
-        if "error" in result:
-            return result
-        if not result.get("data"):
-            return {"error": "User not found", "details": "No :User node was found in the graph."}
+        params = {"username": username}
 
         try:
+            result = await self.db_client.execute_query(query, params)
+
+            if not result.get("data"):
+                return {"error": "User not found", "details": "No :User node was found in the graph."}
+
             data = result["data"][0]
             user_props = data.get("user")
             location_props = data.get("location")
@@ -337,28 +304,23 @@ class PersonTools(BaseToolProvider):
             if location_props:
                 validated_location = LocationDetails.model_validate(location_props)
 
-            output = {
+            return {
                 "user": validated_user.model_dump(mode='json'),
                 "location": validated_location.model_dump(mode='json') if validated_location else None
             }
-            return output
+
+        except Neo4jCircuitBreakerError as e:
+            logger.warning(f"Circuit Breaker blocked get get_user_info_internal")
+            return {"error": "Database_Unavailable", "details": str(e)}
+        except Neo4jClientError as e:
+            logger.error(f"Database error in get_user_info_internal: {e}")
+            return {"error": "Database_Unavailable", "details": str(e)}
         except ValidationError as e:
             logger.error(f"Validation error for User/Location: {e.errors()}")
             return {"error": "Data validation failed", "details": e.errors()}
         except Exception as e:
             logger.error(f"Unexpected error in get_user_info: {e}")
             return {"error": "Data parsing failed", "details": str(e)}
-
-    async def get_user_info(self) -> str:
-        """
-        Fetches the primary User node and their LIVES_AT location.
-        It takes no arguments and assumes a single User node in the graph.
-        Returns the user's properties and their location's properties as a JSON string.
-        This data is cached in the state context Userinfo, use that data instead of this tool.
-        """
-        output_dict = await self.get_user_info_internal()
-        return json.dumps(output_dict, indent=2, default=str)
-
 
     def get_tools(self) -> list:
         """
@@ -386,11 +348,11 @@ class PersonTools(BaseToolProvider):
             #     description=self.get_relationship_to_user.__doc__,
             #     args_schema=GetRelationshipArgs
             # ),
-            StructuredTool.from_function(
-                func=None,
-                coroutine=self.get_user_info,
-                name="get_user_info",
-                description=self.get_user_info.__doc__,
-                args_schema=GetUserInfoArgs
-            ),
+            # StructuredTool.from_function(
+            #     func=None,
+            #     coroutine=self.get_user_info,
+            #     name="get_user_info",
+            #     description=self.get_user_info.__doc__,
+            #     args_schema=GetUserInfoArgs
+            # ),
         ]

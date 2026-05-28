@@ -17,8 +17,12 @@ logger = logging.getLogger(__name__)
 class Agent:
     """Encapsulates the reasoning engine and conversation state management."""
 
-    def __init__(self, reasoning_engine, initial_user_info: Dict[str, Any]):
+    def __init__(self, reasoning_engine, initial_user_info: Dict[str, Any] = None):
         self.reasoning_engine = reasoning_engine
+
+        if initial_user_info is None:
+            initial_user_info = {}
+
         self.conversation_state: GraphState = {
             "messages": [],
             "userinfo": initial_user_info,
@@ -46,6 +50,11 @@ class Agent:
     def get_voice(self) -> str:
         """Gets the current TTS voice."""
         return self.conversation_state.get("voice", TTS_VOICE)
+
+    def set_user_info(self, user_info: Dict[str, Any]):
+        self.conversation_state["userinfo"] = user_info
+        user_name = user_info.get("user", {}).get("firstName", DEFAULT_USERNAME)
+        logger.info(f"Agent user updated to: {user_name}")
 
 
     async def ainvoke(self, text_input: str) -> str:

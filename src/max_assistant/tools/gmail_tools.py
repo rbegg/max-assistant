@@ -24,8 +24,9 @@ from googleapiclient.errors import HttpError
 
 from langchain_ollama import ChatOllama
 from langchain_core.tools import StructuredTool
+
 from max_assistant.models.google_models import SendGmailArgs
-from max_assistant.clients.neo4j_client import Neo4jClient
+from max_assistant.clients.neo4j_client import Neo4jClient, Neo4jClientError, Neo4jCircuitBreakerError
 from max_assistant.config import (
     GOOGLE_SENDER_EMAIL, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
 )
@@ -66,14 +67,19 @@ class GmailTools(BaseToolProvider):
         Saves the refresh_token, access_token, and expiry to the :User node.
         """
 
-        check_query = "MATCH (u:User) RETURN u.gmailRefreshToken AS token"
-        result = await self.db_client.execute_query(check_query, {})
-        if "data" in result and result["data"] and result["data"][0].get("token"):
-            logger.warning(
-                "Gmail refresh token already exists for the User in Neo4j. "
-                "Skipping authentication. To re-authenticate, clear the "
-                "gmail... properties on the :User node."
-            )
+        try:
+            check_query = "MATCH (u:User) RETURN u.gmailRefreshToken AS token"
+            result = await self.db_client.execute_query(check_query, {})
+
+            if "data" in result and result["data"] and result["data"][0].get("token"):
+                logger.warning("Gmail refresh token already exists. Skipping authentication.")
+                return
+
+        except Neo4jCircuitBreakerError:
+            logger.error("Cannot authenticate. Database circuit is OPEN.")
+            return
+        except Neo4jClientError as e:
+            logger.error(f"Cannot authenticate. Database error: {e}")
             return
 
         if not self.client_id or not self.client_secret:
@@ -98,60 +104,58 @@ class GmailTools(BaseToolProvider):
             logger.error("Authentication failed: No refresh token was returned.")
             return
 
-        # --- CHANGED: Save all user tokens and expiry to Neo4j ---
-        set_query = """
-        MATCH (u:User) 
-        SET u.gmailRefreshToken = $refresh_token,
-            u.gmailAccessToken = $access_token,
-            u.gmailTokenExpiry = $expiry
-        """
-        params = {
-            "refresh_token": creds.refresh_token,
-            "access_token": creds.token,
-            "expiry": creds.expiry.isoformat()  # Store expiry as an ISO string
-        }
+        # Save all user tokens and expiry to Neo4j ---
+        try:
+            set_query = """
+                    MATCH (u:User) 
+                    SET u.gmailRefreshToken = $refresh_token,
+                        u.gmailAccessToken = $access_token,
+                        u.gmailTokenExpiry = $expiry
+                    """
+            params = {
+                "refresh_token": creds.refresh_token,
+                "access_token": creds.token,
+                "expiry": creds.expiry.isoformat()
+            }
+            await self.db_client.execute_query(set_query, params)
+            logger.info("Authentication successful. Tokens saved to :User node.")
 
-        await self.db_client.execute_query(set_query, params)
-        logger.info("Authentication successful. All user tokens saved to :User node.")
+        except Neo4jClientError as e:
+            logger.error(f"Authentication succeeded with Google, but failed to save to Neo4j: {e}")
 
     async def _get_credentials(self) -> Credentials | None:
-        """
-        Private helper to get valid credentials.
-        It loads all user tokens from Neo4j, reconstructs the Credentials object,
-        and refreshes/re-saves the access token *only if* it's expired.
-        """
         if not self.client_id or not self.client_secret:
             logger.error("Failed to get credentials. App secrets not set in env.")
             return None
 
-        # 1. Fetch all user tokens and cache from Neo4j
-        get_query = """
-        MATCH (u:User) 
-        RETURN u.gmailRefreshToken AS refresh_token,
-               u.gmailAccessToken AS access_token,
-               u.gmailTokenExpiry AS expiry
-        """
-        result = await self.db_client.execute_query(get_query, {})
+        # 1. Fetch tokens safely
+        try:
+            get_query = """
+            MATCH (u:User) 
+            RETURN u.gmailRefreshToken AS refresh_token,
+                   u.gmailAccessToken AS access_token,
+                   u.gmailTokenExpiry AS expiry
+            """
+            result = await self.db_client.execute_query(get_query, {})
+            data = result.get("data", [{}])[0]
 
-        if "error" in result:
-            logger.error(f"Neo4j error: {result['error']}")
+        except Neo4jCircuitBreakerError as e:
+            logger.warning("Cannot fetch Gmail credentials. Database circuit is OPEN.")
+            raise e
+        except Neo4jClientError as e:
+            logger.error(f"Database error fetching credentials: {e}")
             return None
 
-        data = result.get("data", [{}])[0]
         refresh_token = data.get("refresh_token")
         access_token = data.get("access_token")
         expiry_str = data.get("expiry")
 
         if not refresh_token:
-            logger.error("No Gmail refresh token found on :User node. "
-                         "Please run the 'gmail_authenticate.py' script first.")
+            logger.error("No Gmail refresh token found on :User node.")
             return None
 
-        # 2. Reconstruct the Credentials object from its components
         try:
-            # Parse the expiry string back into a datetime object
             expiry_dt = datetime.fromisoformat(expiry_str) if expiry_str else None
-
             creds = Credentials(
                 token=access_token,
                 refresh_token=refresh_token,
@@ -162,30 +166,34 @@ class GmailTools(BaseToolProvider):
                 expiry=expiry_dt
             )
 
-            # 3. Check expiry and refresh *only if needed*
+            # Refresh token logic
             if creds and creds.expired and creds.refresh_token:
                 logger.info("Access token is expired. Refreshing...")
                 await asyncio.to_thread(creds.refresh, Request())
 
-                # 4. Save the new, refreshed token and expiry back to Neo4j
-                set_query = """
-                MATCH (u:User) 
-                SET u.gmailAccessToken = $access_token,
-                    u.gmailTokenExpiry = $expiry
-                """
-                params = {
-                    "access_token": creds.token,
-                    "expiry": creds.expiry.isoformat()
-                }
-                await self.db_client.execute_query(set_query, params)
-                logger.info("Access token refreshed and saved back to Neo4j.")
+                # Save new token safely
+                try:
+                    set_query = """
+                    MATCH (u:User) 
+                    SET u.gmailAccessToken = $access_token,
+                        u.gmailTokenExpiry = $expiry
+                    """
+                    params = {
+                        "access_token": creds.token,
+                        "expiry": creds.expiry.isoformat()
+                    }
+                    await self.db_client.execute_query(set_query, params)
+                    logger.info("Access token refreshed and saved back to Neo4j.")
+                except Neo4jClientError as e:
+                    # Non-fatal error. We have valid creds in memory for this run,
+                    # we just failed to cache them for next time.
+                    logger.warning(f"Failed to save refreshed token to database: {e}")
 
             elif creds.valid:
                 logger.info("Using cached, valid access token.")
 
         except Exception as e:
             logger.error(f"Failed to refresh access token: {e}")
-            logger.error("The user's refresh token may be expired or revoked.")
             return None
 
         if not creds or not creds.valid:
@@ -226,11 +234,26 @@ class GmailTools(BaseToolProvider):
             logger.error(error_msg)
             return json.dumps({"error": error_msg})
 
-        creds = await self._get_credentials()
-        if not creds:
-            error_msg = "Failed to get valid credentials. Run authentication."
-            logger.error(error_msg)
-            return json.dumps({"error": error_msg})
+        try:
+            # This will raise an error if the DB is offline,
+            # or return None if the user just isn't authenticated.
+            creds = await self._get_credentials()
+
+            if not creds:
+                # SCENARIO A: The DB is fine, but the user isn't logged in.
+                logger.warning("Email tool aborted: User is not authenticated.")
+                return json.dumps({
+                    "error": "Authentication_Required",
+                    "instruction": "You cannot send the email because you do not have Gmail credentials on file. Tell the user they need to run the authentication setup first."
+                })
+
+        except Neo4jCircuitBreakerError:
+            # SCENARIO B: The DB is offline.
+            logger.warning("Email tool aborted: Database circuit is OPEN.")
+            return json.dumps({
+                "error": "Database_Offline_Circuit_Open",
+                "instruction": "You cannot send the email because the system database is offline and you cannot retrieve your credentials. Apologize and inform the user."
+            })
 
         try:
             # The 'build' function is blocking, run in a thread

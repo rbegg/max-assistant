@@ -36,45 +36,6 @@ class FamilyTools(BaseToolProvider):
         super().__init__(db_client, llm)
         logger.info("FamilyTools initialized with a Neo4j client.")
 
-    async def _query_and_validate_nodes(
-            self,
-            query: str,
-            params: dict,
-            model_class: Type[BaseModel],
-            result_key: str
-    ) -> str:
-        """
-        Private helper to execute a query, validate results against a
-        Pydantic model, and return a JSON string.
-        (This is a copy of the helper in PersonTools)
-        """
-        logger.debug(f"Executing query for model: {model_class.__name__}")
-        result = await self.db_client.execute_query(query, params)
-
-        if "error" in result:
-            return json.dumps(result)
-
-        try:
-            raw_nodes = [item[result_key] for item in result.get("data", [])]
-            validated_nodes = [model_class.model_validate(node) for node in raw_nodes]
-            return json.dumps(
-                [node.model_dump(mode='json') for node in validated_nodes],
-                indent=2,
-                default=str
-            )
-        except ValidationError as e:
-            logger.error(f"Validation error for {model_class.__name__}: {e.errors()}")
-            return json.dumps(
-                {"error": "Data validation failed", "details": e.errors()},
-                default=str
-            )
-        except KeyError:
-            logger.error(f"Validation: Unexpected data structure. Expected key '{result_key}'.")
-            return json.dumps({"error": "Data parsing failed",
-                               "details": f"Missing key: {result_key}"})
-        except Exception as e:
-            logger.error(f"Unexpected error: {e}")
-            return json.dumps({"error": "Data parsing failed", "details": str(e)})
 
     async def get_my_parents(self) -> str:
         """

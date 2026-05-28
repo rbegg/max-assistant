@@ -14,7 +14,7 @@ from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 from langgraph.prebuilt import InjectedState
 
-from max_assistant.clients.neo4j_client import Neo4jClient
+from max_assistant.clients.neo4j_client import Neo4jClient, Neo4jCircuitBreakerError
 from max_assistant.agent.prompts import CYPHER_GENERATION_PROMPT
 from max_assistant.tools.registry import BaseToolProvider
 
@@ -66,8 +66,8 @@ class GeneralQueryTools(BaseToolProvider):
 
     async def answer_general_question(self, question: str, user_info: dict) -> str:
         """
-        UNIVERSAL FALLBACK TOOL: You MUST use this tool to answer ANY question about
-        family members, relationships, locations, addresses, or personal history if no
+        Try tp use this tool to answer ANY question about
+        family members, support staff, relationships, locations, addresses, or personal history if no
         other specific tool applies. Use this for questions like "Does X have children?",
         "Where does Y live?", or "Who are my great-grandchildren?".
         """
@@ -107,8 +107,15 @@ class GeneralQueryTools(BaseToolProvider):
             result = await self.db_client.execute_query(cypher_query, params={})
 
             # 4. Return the raw JSON string
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, default=str)
 
+        except Neo4jCircuitBreakerError as e:
+            logger.warning(f"Circuit Breaker blocked general query: {e}")
+            return json.dumps({
+                "error": "Database_Offline_Circuit_Open",
+                "instruction": "The system database is currently offline. Do not attempt further queries. Inform the user you cannot access their data right now.",
+                "details": str(e)
+            })
         except Exception as e:
             logger.error(f"Error in answer_general_question: {e}", exc_info=True)
             return json.dumps({"error": e.__class__.__name__, "message": str(e)})
