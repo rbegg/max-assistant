@@ -26,6 +26,8 @@ from max_assistant.clients.stt_client import STTClient
 from max_assistant.clients.tts_client import TTSClient
 from .app_services import AppServices
 from .tools import PersonTools
+from max_assistant.agent.sessions import active_sessions
+from max_assistant.config import TTS_VOICE
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +37,7 @@ class ConnectionManager:
 
     def __init__(self, app_services: AppServices, websocket: WebSocket):
         self.ws = websocket
-        self.agent = Agent(app_services.reasoning_engine, {})
+        self.agent = None # Lazy Initialization
         self.stt_client = STTClient()
         self.tts_client = TTSClient()
         self.app_services = app_services
@@ -118,13 +120,13 @@ class ConnectionManager:
         """
         if not self.app_services.llm_ready_event.is_set():
             logger.info("LLM not ready. Sending a waiting message to the client.")
-            response_text = "I am just getting set up, I'll be with you in a moment."
+            response_text = "I am just getting set up, Please Try again in a moment."
 
             response_payload = {"data": response_text, "source": "assistant"}
             await self.client_output_queue.put(json.dumps(response_payload))
 
             output_audio = await self.tts_client.synthesize_speech(
-                response_text, self.agent.get_voice()
+                response_text, TTS_VOICE
             )
             if output_audio:
                 logger.info("Sending audio for waiting message.")
@@ -178,25 +180,36 @@ class ConnectionManager:
         """Processes text input from the client and updates the conversation state."""
         try:
             while not self._shutdown_event.is_set():
-                # This blocks naturally until an item is available, yielding control to the event loop
+                # This blocks naturally until an item is available
                 text_data = await self.text_input_queue.get()
 
                 logger.info(f"TEXT_HANDLER: Received text from client: {text_data}")
 
                 try:
                     client_dict = json.loads(text_data)
-                    if "username" in client_dict:
+
+                    # --- GATEKEEPER ---
+                    # If agent is None, the client is not yet authenticated.
+                    if self.agent is None:
+                        if "username" not in client_dict:
+                            logger.warning("Unauthenticated message received. Awaiting username.")
+                            continue
+
                         target_username = client_dict['username']
-                        logger.info(f"username sent: {target_username}")
+                        logger.info(f"Attempting authentication for: {target_username}")
 
                         person_tools = PersonTools(self.app_services.db_client)
                         user_data = await person_tools.get_user_info_internal(target_username)
 
                         if "error" in user_data:
-                            logging.error(f"Could not find user {target_username} in DB. Closing connection.")
-                            # Optionally notify the client before closing
-                            error_payload = {"data": "User not found in database. Connection closed.",
-                                             "source": "system"}
+                            logging.error(
+                                f"Failed to get user record, closing connection: Details {user_data["error"]}."
+                            )
+                            # Notify the client before closing
+                            error_payload = {
+                                "data": f"Failed to get user record, closing connection: Details {user_data["error"]}.",
+                                "source": "system"
+                            }
                             await self.ws.send_text(json.dumps(error_payload))
 
                             # Close the websocket with a policy violation code (1008)
@@ -206,23 +219,47 @@ class ConnectionManager:
                             self._shutdown_event.set()
                             break
                         else:
+                            # SUCCESS: Initialize Agent and Register Session
+                            self.agent = Agent(self.app_services.reasoning_engine, user_data)
+                            self.agent.connection_manager = self
                             self.agent.set_user_info(user_data)
 
+                            # Register globally so the reminder poller can find this agent
+                            user_id = user_data.get("user", {}).get("id")
+                            if user_id:
+                                active_sessions[user_id] = self.agent
+                                logger.info(f"Session registered globally for user_id: {user_id}")
+
+                            continue  # Move to next input
+
+                    # --- NORMAL PROCESSING ---
+                    # This block only runs if self.agent is not None
                     if "voice" in client_dict:
                         self.agent.set_voice(client_dict["voice"])
+
+                    # If conversational text arrives, add it to the agent's queue
+                    if "text" in client_dict:
+                        await self.text_input_queue.put(client_dict["text"])
 
                 except (json.JSONDecodeError, TypeError) as e:
                     logging.warning(f"Could not parse text message from client: {e}")
                 finally:
-                    # Explicitly mark the task as done to maintain queue integrity
+                    # Mark the task as done to maintain queue integrity
                     self.text_input_queue.task_done()
 
         except asyncio.CancelledError:
             logger.info("Text input handler loop task cancelled.")
+            raise
         except Exception as e:
             logging.error(f"Error in text input handler: {e}", exc_info=True)
             self._shutdown_event.set()
         finally:
+            # Cleanup registration when connection ends
+            if self.agent and self.agent.conversation_state:
+                user_id = self.agent.conversation_state.get("userinfo", {}).get("user", {}).get("id")
+                if user_id and user_id in active_sessions:
+                    del active_sessions[user_id]
+                    logger.info(f"Session unregistered for user_id: {user_id}")
             logger.info("Text input handler loop has stopped.")
 
     async def _agent_loop(self):
@@ -261,8 +298,8 @@ class ConnectionManager:
         finally:
             logger.info("Agent loop has stopped.")
 
-
-    async def _cancel_tasks(self, tasks: List[asyncio.Task]):
+    @staticmethod
+    async def _cancel_tasks(tasks: List[asyncio.Task]):
         for task in tasks:
             if not task.done():
                 task.cancel()

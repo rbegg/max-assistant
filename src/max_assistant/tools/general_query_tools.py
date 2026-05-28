@@ -11,24 +11,15 @@ from typing import Annotated
 
 from langchain_ollama import ChatOllama
 from langchain_core.tools import StructuredTool
-from pydantic import BaseModel, Field
 from langgraph.prebuilt import InjectedState
 
-from max_assistant.clients.neo4j_client import Neo4jClient, Neo4jCircuitBreakerError
+from max_assistant.clients.neo4j_client import Neo4jClient, Neo4jCircuitBreakerError, Neo4jClientError
 from max_assistant.agent.prompts import CYPHER_GENERATION_PROMPT
 from max_assistant.tools.registry import BaseToolProvider
+from max_assistant.utils.decorators import requires_db
+
 
 logger = logging.getLogger(__name__)
-
-
-class GeneralQuestionArgs(BaseModel):
-    """Input arguments for the answer_general_question tool."""
-    question: str = Field(
-        ...,
-        description="A natural language question to be answered by the graph."
-    )
-    # The LLM will not see this in the schema. LangGraph will inject state["userinfo"] here.
-    user_info: Annotated[dict, InjectedState("userinfo")]
 
 
 class GeneralQueryTools(BaseToolProvider):
@@ -42,15 +33,19 @@ class GeneralQueryTools(BaseToolProvider):
         Initializes the toolset with a Neo4j client and an LLM.
         """
         super().__init__(db_client, llm)
-        self.cypher_generation_chain = CYPHER_GENERATION_PROMPT | self.llm
+        if llm is None:
+            raise ValueError("GeneralQueryTools strictly requires an LLM instance to generate Cypher.")
+
+        self.cypher_generation_chain = CYPHER_GENERATION_PROMPT | llm
         logger.info("GeneralQueryTools initialized with Neo4j client and LLM.")
 
-    def _parse_cypher_from_response(self, response_content: str) -> str:
+    @staticmethod
+    def _parse_cypher_from_response(response_content: str) -> str:
         """
         Safely extracts a Cypher query from an LLM's markdown response.
         """
         # Look for a Cypher code block
-        match = re.search(r"```(?:cypher|CYPHER)\n(.*?)```", response_content, re.DOTALL)
+        match = re.search(r"```(?:cypher|CYPHER)?\s*\n(.*?)\n\s*```", response_content, re.DOTALL)
         if match:
             return match.group(1).strip()
 
@@ -64,17 +59,24 @@ class GeneralQueryTools(BaseToolProvider):
         # Return a query that will gracefully fail
         return "RETURN 'Error: Could not parse Cypher query from LLM response'"
 
-    async def answer_general_question(self, question: str, user_info: dict) -> str:
+    @requires_db
+    async def answer_general_question(
+            self,
+            question: str,
+            user_info: Annotated[dict, InjectedState("userinfo")]
+    ) -> str:
         """
-        Try tp use this tool to answer ANY question about
+        Try to use this tool to answer ANY question about
         family members, support staff, relationships, locations, addresses, or personal history if no
         other specific tool applies. Use this for questions like "Does X have children?",
-        "Where does Y live?", or "Who are my great-grandchildren?".
+        "Where does Y live?", or "Who are my great-grandchildren?"
         """
         logger.info(f"Tool: answer_general_question for: {question}")
 
         # Convert the injected state dict into the string format your prompt expects
-        user_info_json = json.dumps(user_info)
+        #user_info_json = json.dumps(user_info)
+        user_id = self._get_verified_user_id(user_info)
+        params = {"user_id": user_id}
 
         try:
             # 1. Get the graph schema
@@ -91,20 +93,22 @@ class GeneralQueryTools(BaseToolProvider):
                 logger.error(f"Failed to decode schema JSON: {schema_str}")
                 return json.dumps({"error": "Failed to decode graph schema."})
 
-            # 2. Generate the Cypher query
+            # 2. Generate the Cipher query
             logger.debug("Generating Cypher query...")
             response = await self.cypher_generation_chain.ainvoke({
                 "schema": schema_str,
                 "question": question,
-                "user_info": user_info_json
+                #"user_info": user_info_json
             })
 
-            cypher_query = self._parse_cypher_from_response(response.content)
+            response_text = response.content if isinstance(response.content, str) else str(response.content)
+
+            cypher_query = self._parse_cypher_from_response(response_text)
             logger.info(f"Generated Cypher: {cypher_query}")
 
             # 3. Execute the query
             # We use params={} as the LLM is instructed to embed values
-            result = await self.db_client.execute_query(cypher_query, params={})
+            result = await self.db_client.execute_query(cypher_query, params=params)
 
             # 4. Return the raw JSON string
             return json.dumps(result, indent=2, default=str)
@@ -116,9 +120,14 @@ class GeneralQueryTools(BaseToolProvider):
                 "instruction": "The system database is currently offline. Do not attempt further queries. Inform the user you cannot access their data right now.",
                 "details": str(e)
             })
+
+        except Neo4jClientError as e:
+            logger.error(f"Database error in dynamic query generation: {e}")
+            return json.dumps({"error": "Database_Unavailable", "details": str(e)})
+
         except Exception as e:
-            logger.error(f"Error in answer_general_question: {e}", exc_info=True)
-            return json.dumps({"error": e.__class__.__name__, "message": str(e)})
+            logger.error(f"Unexpected error in answer_general_question: {e}", exc_info=True)
+            return json.dumps({"error": "Internal_Error", "details": str(e)})
 
     def get_tools(self) -> list:
         """
@@ -130,6 +139,6 @@ class GeneralQueryTools(BaseToolProvider):
                 coroutine=self.answer_general_question,
                 name="answer_general_question",
                 description=self.answer_general_question.__doc__,
-                args_schema=GeneralQuestionArgs
+                handle_tool_error=self.format_system_tool_error,
             ),
         ]

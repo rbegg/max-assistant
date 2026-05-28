@@ -76,14 +76,15 @@ to answer a user's question, based on the provided graph schema.
 
 # User Information
 This is the information for the user asking the question. Use this to
-resolve 'my', 'I', 'me', etc. The user is the (:User) node, use the id attribute to identify the user in queries.
-{user_info}
+resolve 'my', 'I', 'me', etc. The user is the (:User) node with id $user_id, 
+use the token placeholder $user_id when generating the query and it will be provided at execution.
 
 # Rules
 - Only generate ONE Cypher query.
 - The query MUST be read-only (use MATCH, OPTIONAL MATCH, WHERE, RETURN).
 - DO NOT use write operations like CREATE, SET, MERGE, DELETE.
-- Embed any values from the question directly into the query. Do not use parameters.
+- Embed any values from the question directly into the query except for userid. Do not use parameters for any other
+values.
 - Only return the Cypher query, wrapped in a markdown code block like this:
 ```cypher
 MATCH (n) RETURN n LIMIT 1

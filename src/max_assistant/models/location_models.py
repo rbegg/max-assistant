@@ -3,7 +3,7 @@
 """
 Defines Pydantic models for the location-related tools
 """
-from pydantic import BaseModel, Field
+from pydantic import Field
 from typing import Optional
 from max_assistant.models.base import BaseNeo4jModel
 

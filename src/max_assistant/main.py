@@ -15,12 +15,13 @@ from max_assistant.app_services import AppServices
 from max_assistant.connection_manager import ConnectionManager
 from max_assistant.agent.agent import Agent
 from max_assistant.tools.reminder_tools import ReminderTools
+from max_assistant.agent.sessions import active_sessions
 
 logger = logging.getLogger(__name__)
 
 app_services: AppServices = None
 poller_task: asyncio.Task = None
-active_user_agent: Agent = None
+
 
 
 def setup_logging(config_path='log_config.json'):
@@ -69,15 +70,16 @@ async def lifespan(_: FastAPI):
         )
 
         if reminder_tools_instance:
-            def get_current_active_agent():
-                global active_user_agent
-                return active_user_agent
+            # FIX: Return the active_sessions dictionary
+            def get_active_sessions():
+                return active_sessions
 
             logger.info("Spawning background reminder poller task from ReminderTools registry provider...")
             poller_task = asyncio.create_task(
                 reminder_tools_instance.start_reminder_poller_dynamic(
-                    get_agent_fn=get_current_active_agent,
-                    poll_interval_seconds=20)
+                    get_sessions_fn=get_active_sessions,  # Pass the dict getter
+                    poll_interval_seconds=20
+                )
             )
         else:
             logger.error("ReminderTools provider not found in registry! Poller task skipped.")
@@ -122,7 +124,7 @@ def health_check():
 
 @app.websocket("/ws")
 async def websocket_endpoint(client_ws: WebSocket):
-    global app_services, active_user_agent
+    global app_services
 
     await client_ws.accept()
     logger.info("Client connected.")
@@ -137,13 +139,7 @@ async def websocket_endpoint(client_ws: WebSocket):
         app_services,
         client_ws
     )
-    manager.agent.connection_manager = manager
 
-    active_user_agent = manager.agent
-
-    logger.info(
-        f"Active user agent session captured for thread tracking: {manager.agent.conversation_state['thread_id']}"
-    )
 
     try:
         await manager.handle_connection()

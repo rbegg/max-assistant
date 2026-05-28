@@ -3,9 +3,9 @@
 """
 Defines Pydantic models for the schedule-related tools and neo4j nodes
 """
-from pydantic import BaseModel, Field, ConfigDict, model_validator
-from typing import List, Optional, Any, Dict
-from datetime import datetime, date, time
+from pydantic import Field
+from typing import List, Optional
+from datetime import date, time
 import logging
 
 from max_assistant.models.base import BaseNeo4jModel
@@ -13,7 +13,7 @@ from max_assistant.models.base import BaseNeo4jModel
 logger = logging.getLogger(__name__)
 
 
-class Appointment(BaseNeo4jModel):  # <-- Inherits from our base model
+class Appointment(BaseNeo4jModel):  # <-- Inherits from base model
     """Represents an Appointment node from Neo4j."""
     id: str
     title: str
@@ -38,11 +38,3 @@ class DailyRoutine(BaseNeo4jModel):  # <-- Also inherits
     room: Optional[str] = None
     details: Optional[str] = None
     rating: Optional[str] = None
-
-
-class CreateAppointmentArgs(BaseModel):
-    """Defines the arguments for the create_appointment tool."""
-    title: str = Field(..., description="The main title of the appointment.")
-    date: str = Field(..., description="The date in YYYY-MM-DD format.")
-    details: Optional[str] = Field(None, description="Optional notes or details.")
-    duration: Optional[int] = Field(None, description="Duration in minutes.")

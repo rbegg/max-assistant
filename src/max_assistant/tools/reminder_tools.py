@@ -7,11 +7,14 @@ from datetime import datetime, timedelta
 import json
 import asyncio
 import logging
+from typing import Annotated
 
 from langchain_core.tools import StructuredTool
+from langgraph.prebuilt import InjectedState
+
 from max_assistant.tools.registry import BaseToolProvider
-from max_assistant.models.reminder_models import ScheduleReminderArgs
 from max_assistant.clients.neo4j_client import Neo4jClientError, Neo4jCircuitBreakerError
+from max_assistant.utils.decorators import requires_db
 
 
 logger = logging.getLogger(__name__)
@@ -26,11 +29,19 @@ class ReminderTools(BaseToolProvider):
         super().__init__(db_client, llm)
         logger.info("ReminderTools initialized with a Neo4j client.")
 
-    async def schedule_reminder(self, message: str, delay_minutes: float) -> str:
+    @requires_db
+    async def schedule_reminder(
+            self,
+            message: str,
+            delay_minutes: float,
+            user_info: Annotated[dict, InjectedState("userinfo")]
+        ) -> str:
         """
         Use this tool to schedule a reminder message after a certain number of minutes.
         """
         logger.info(f"Tool: schedule_reminder - message='{message}', delay={delay_minutes}m")
+
+        user_id = self._get_verified_user_id(user_info)
 
         try:
             # Calculate the absolute execution time
@@ -38,7 +49,7 @@ class ReminderTools(BaseToolProvider):
             due_iso = due_datetime.isoformat()
 
             query = """
-                MATCH (u:User) 
+                MATCH (u:User {id: $user_id}) 
                 WITH u, datetime($due_time) AS d
                 CREATE (t:Task {
                     id: randomUUID(),
@@ -56,13 +67,26 @@ class ReminderTools(BaseToolProvider):
             """
             params = {
                 "text": message,
-                "due_time": due_iso
+                "due_time": due_iso,
+                "user_id": user_id,
             }
 
             result = await self.db_client.execute_query(query, params)
 
+            data = result.get("data", [])
+            if not data:
+                logger.error("Failed to schedule reminder: Could not match User ID in database.")
+                return json.dumps({
+                    "error": "User_Not_Found",
+                    "instruction": "Could not attach the reminder because your user profile was not found in the database. Please inform the user."
+                })
+
+            # 4. Extract and use the task_id
+            task_id = data[0].get("task_id")
+
             return json.dumps({
                 "success": True,
+                "task_id": task_id,
                 "message": f"Successfully scheduled reminder: '{message}' for {delay_minutes} minutes from now.",
                 "due_time": due_iso
             }, indent=2)
@@ -91,73 +115,73 @@ class ReminderTools(BaseToolProvider):
         """
         Returns a list of all tool methods bound to this instance.
         """
-        def sync_fallback(*args, **kwargs):
-            raise NotImplementedError("This tool is asynchronous and must be invoked using invoke_async or waited.")
-
         return [
             StructuredTool.from_function(
-                func=sync_fallback,
+                func=None,
                 coroutine=self.schedule_reminder,
                 name="schedule_reminder",
                 description=self.schedule_reminder.__doc__,
-                args_schema=ScheduleReminderArgs
+                handle_tool_error=self.format_system_tool_error,
             )
         ]
 
-    async def start_reminder_poller_dynamic(self, get_agent_fn, poll_interval_seconds: int = 20):
+    async def start_reminder_poller_dynamic(self, get_sessions_fn, poll_interval_seconds: int = 20):
         """
-        A continuous, non-blocking background loop that polls Neo4j for pending reminders.
+        A continuous, non-blocking background loop that polls Neo4j for pending reminders for all users
+        and routes them to the correct user session.
         """
-        logger.info("Background reminder poller service activated via localized date-tree matching.")
+        logger.info("Background reminder poller service activated.")
 
         check_query = """
                       WITH datetime($now) AS now
-                          MATCH (t:Task {status: 'PENDING', type : 'REMINDER'})
+                          MATCH (u: User)-[:HAS_YEAR]- \
+                         >()-[:HAS_MONTH]- \
+                         >()-[:HAS_DAY]- \
+                         >()-[:HAS_TASK]- \
+                         >(t:Task {status: 'PENDING' \
+                         , type : 'REMINDER'})
                       WHERE t.due_time <= now
                       SET t.status = 'COMPLETED'
-                          RETURN t.text AS text, t.id AS id
+                          RETURN t.text AS text, t.id AS id, u.id AS user_id
                       """
 
         while True:
             try:
-                agent = get_agent_fn()
-                if not agent:
-                    await asyncio.sleep(poll_interval_seconds)
-                    continue
-
+                # 1. Fetch the active sessions dictionary via the getter
+                active_sessions = get_sessions_fn()
                 params = {"now": datetime.now().isoformat()}
 
-                # The execution is now safely inside a try/except block
+                # 2. Execute the query to find pending tasks
                 result = await self.db_client.execute_query(check_query, params)
 
                 tasks_due = result.get("data", [])
                 for task in tasks_due:
                     reminder_text = task.get("text")
                     task_id = task.get("id")
+                    user_id = task.get("user_id")  # Get the owner's ID
 
-                    logger.info(f"Poller detected matured timer [{task_id}]: '{reminder_text}'")
+                    logger.info(f"Poller detected matured timer [{task_id}] for user [{user_id}]")
+
+                    # 3. Look up the specific agent for this user
+                    target_agent = active_sessions.get(user_id)
 
                     payload = {"task_id": task_id, "text": reminder_text}
 
-                    if agent and agent.connection_manager:
-                        await agent.connection_manager.submit_external_event(payload)
+                    # 4. Route the event to the correct connection manager
+                    if target_agent and target_agent.connection_manager:
+                        await target_agent.connection_manager.submit_external_event(payload)
                     else:
-                        logger.warning("Reminder triggered, but no active connection is available.")
+                        logger.warning(f"Reminder triggered for user [{user_id}], but no active connection found.")
 
             except Neo4jCircuitBreakerError:
-                # SILENT CATCH: The DB is offline. Log it at DEBUG level so we don't spam
-                # the terminal every 20 seconds, and just wait for the next tick.
                 logger.debug("Reminder poller paused: Database circuit is OPEN.")
-
             except Neo4jClientError as e:
-                logger.error(f"Database error in reminder poller: {e}. Backing off for 60 seconds.")
-                await asyncio.sleep(60)  # Extended backoff to prevent log spam
-                continue  # Skip the standard 20-second sleep at the bottom of the loop
-
+                logger.error(f"Database error in reminder poller: {e}. Backing off.")
+                await asyncio.sleep(60)
+                continue
             except asyncio.CancelledError:
-                logger.info("Poller loop received explicit cancellation signal. Shutting down gracefully.")
+                logger.info("Poller loop received cancellation signal.")
                 raise
-
             except Exception as e:
                 logger.error(f"Unexpected exception in reminder poller: {e}", exc_info=True)
 
