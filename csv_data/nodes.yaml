@@ -4,7 +4,7 @@
      - "CREATE CONSTRAINT IF NOT EXISTS FOR (p:Person) REQUIRE p.id IS UNIQUE"
   query: |
     UNWIND $data AS row
-    MERGE (p:Person {id: toInteger(row.id)})
+    MERGE (p:Person {id: row.id})
     SET p.firstName = row.firstName, 
         p.lastName = row.lastName, 
         p.gender = row.gender,
@@ -19,7 +19,7 @@
   filename: "user.csv"
   query: |
     UNWIND $data AS row
-    MERGE (p:Person:User {id: toInteger(row.id)})
+    MERGE (p:Person:User {id: toString(row.id)})
     SET p.firstName = row.firstName, 
         p.lastName = row.lastName, 
         p.userName = row.userName,
@@ -35,7 +35,7 @@
   filename: "family.csv"
   query: |
     UNWIND $data AS row
-    MERGE (p:Person:Family {id: toInteger(row.id)})
+    MERGE (p:Person:Family {id: row.id})
     SET p.firstName = row.firstName, 
         p.lastName = row.lastName, 
         p.gender = row.gender,
@@ -50,7 +50,7 @@
   filename: "friends.csv"
   query: |
     UNWIND $data AS row
-    MERGE (p:Person:Friend {id: toInteger(row.id)})
+    MERGE (p:Person:Friend {id: row.id})
     SET p.firstName = row.firstName, 
         p.lastName = row.lastName, 
         p.gender = row.gender,
@@ -65,7 +65,7 @@
   filename: "support_persons.csv"
   query: |
     UNWIND $data AS row
-    MERGE (p:Person:Support {id: toInteger(row.id)})
+    MERGE (p:Person:Support {id: row.id})
     SET p.firstName = row.firstName, 
         p.lastName = row.lastName, 
         p.title = row.title,  
@@ -79,20 +79,22 @@
   constraints:
   filename: "appointments.csv"
   query: |
-    UNWIND $data AS row
-    MERGE (a:Appointment {id: toInteger(row.id)})
-    SET a.date = date(row.date), 
-        a.title = row.title, 
-        a.time = localtime(row.time),
-        a.duration = toInteger(row.duration),
-        a.details = row.details
-    RETURN count(*) as count
+        UNWIND $data AS row
+        WITH row, 
+             date() + duration.between(date('2025-11-03'), date(row.date)) AS calculatedDate       
+        MERGE (a:Appointment {id: row.id})
+        SET a.date = calculatedDate, 
+            a.title = row.title, 
+            a.time = localtime(row.time),
+            a.duration = toInteger(row.duration),
+            a.details = row.details
+        RETURN count(*) as count
 - name: "DailyRoutine"
   constraints:
   filename: "daily_routine.csv"
   query: |
     UNWIND $data AS row
-    MERGE (r:DailyRoutine {id: toInteger(row.id)})
+    MERGE (r:DailyRoutine {id: row.id})
     SET r.title = row.title,
         r.type = row.type,
         r.dayOfWeek = [item in split(row.dayOfWeek, ',') | trim(item)],
@@ -109,7 +111,7 @@
   filename: "locations.csv"
   query: |
     UNWIND $data AS row
-    MERGE (l:Location {id: toInteger(row.id)})
+    MERGE (l:Location {id: row.id})
     SET l.name = row.name, 
         l.address = row.address, 
         l.room = row.room, 

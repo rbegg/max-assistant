@@ -3,9 +3,7 @@
 """
 Defines Pydantic models for the person-related tools and neo4j nodes
 """
-from typing import Optional
-from pydantic import BaseModel, Field
-from datetime import date  # <-- Import Python's 'date' type
+from datetime import date
 import logging
 
 from max_assistant.models.base import BaseNeo4jModel
@@ -18,50 +16,16 @@ class PersonDetails(BaseNeo4jModel):
     Validates the properties of a Person, Family, Friend, or Support node.
     Inherits from BaseNeo4jModel to handle type conversions.
     """
-    # model_config is now inherited from BaseNeo4jModel
-
-    # 'id' will be coerced from int to str by the base model's config
+    # model_config is inherited from BaseNeo4jModel
     id: str
-    firstName: Optional[str] = None
-    lastName: Optional[str] = None
-    title: Optional[str] = None  # From Person and Support nodes
-
-    # These types are now 'date' and will be converted by the validator
-    dob: Optional[date] = None
-    dod: Optional[date] = None
-    gender: Optional[str] = None
-    email: Optional[str] = None
-    phone: Optional[str] = None
-    notes: Optional[str] = None
-    startDate: Optional[date] = None  # From Person and Support nodes
-    endDate: Optional[date] = None  # From Person and Support nodes
-
-
-class FindPersonByNameArgs(BaseModel):
-    """Input arguments for the find_person_by_name tool."""
-    first_name: Optional[str] = Field(
-        default=None,
-        description="The person's first name. Case-insensitive, partial match."
-    )
-    last_name: Optional[str] = Field(
-        default=None,
-        description="The person's last name. Case-insensitive, partial match."
-    )
-
-
-class FindPersonByTitleArgs(BaseModel):
-    """Input arguments for the find_person_by_title tool."""
-    title: str = Field(
-        ...,
-        description="The person's title, e.g., 'Doctor' or 'Nurse'. Case-insensitive, partial match."
-    )
-
-
-class GetRelationshipArgs(BaseModel):
-    """Input arguments for the get_relationship_to_user tool."""
-    first_name: str = Field(..., description="The person's first name.")
-    last_name: str = Field(..., description="The person's last name.")
-
-class GetUserInfoArgs(BaseModel):
-    """Arguments for get_user_info tool. Takes no input."""
-    pass
+    firstName: str | None = None
+    lastName: str | None = None
+    title: str | None = None # From Person and Support nodes
+    dob: date | None = None
+    dod: date | None = None
+    gender: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    notes: str | None = None
+    startDate: date | None = None # From Person and Support nodes
+    endDate: date | None = None # From Person and Support nodes

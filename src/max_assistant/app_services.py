@@ -9,7 +9,7 @@ import logging
 import asyncio
 from langchain_ollama import ChatOllama
 from langchain_core.runnables import RunnableSerializable
-from typing import Any, Dict, Tuple
+from typing import Tuple, Type, TypeVar, Optional
 
 from max_assistant.config import (
     NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD,
@@ -19,35 +19,35 @@ from max_assistant.clients.neo4j_client import Neo4jClient
 from max_assistant.clients.ollama_preloader import create_llm_instance, preload_model_async
 from max_assistant.tools import ALL_TOOL_PROVIDERS
 from max_assistant.tools.registry import ToolRegistry
-from max_assistant.tools.person_tools import PersonTools
 from max_assistant.agent.graph import create_reasoning_engine
 
 logger = logging.getLogger(__name__)
 
-# Use a stable, protocol-based type hint for the compiled graph.
-# This avoids import issues and accurately describes the object's capabilities.
 ReasoningEngine = RunnableSerializable
+T = TypeVar('T')
 
 
 class AppServices:
     """
     A container class to encapsulate all singleton services for the application.
-    This solves the WET code issue by centralizing service initialization.
+    Centralizes asynchronous service initialization.
+
+    Do not instantiate directly; use the async factory method `AppServices.create()`.
     """
 
-    def __init__(
-            self,
-            db_client: Neo4jClient,
-            llm: ChatOllama,
-            tool_registry: ToolRegistry,
-            reasoning_engine: ReasoningEngine,
-            llm_ready_event: asyncio.Event
-    ):
+    def __init__(self, private_token, db_client, llm, tool_registry, reasoning_engine, llm_ready_event, preload_task):
+        # Defensively prevent direct instantiation bypassing .create()
+        if private_token != "__FACTORY__":
+            raise RuntimeError("Use AppServices.create() to instantiate this class.")
+
         self.db_client = db_client
         self.llm = llm
         self.tool_registry = tool_registry
         self.reasoning_engine = reasoning_engine
         self.llm_ready_event = llm_ready_event
+
+        # FIX: Keep a strong reference to prevent garbage collection mid-execution
+        self._preload_task = preload_task
 
     @classmethod
     async def create(cls) -> "AppServices":
@@ -57,29 +57,27 @@ class AppServices:
         """
         logger.info("Initializing application services...")
         try:
-            # Event to signal when the LLM is warmed up and ready.
             llm_ready_event = asyncio.Event()
 
-            # --- 1. Initialize Core Clients (DB and LLM) ---
-            db_client, llm = await cls._initialize_clients(llm_ready_event)
+            # 1. Initialize Core Clients (Concurrently)
+            db_client, llm, preload_task = await cls._initialize_clients(llm_ready_event)
 
-            # --- 2. Fetch User Info ---
-            # Moved to agent/thread initialization
-
-            # --- 3. Initialize and Populate Tool Registry ---
+            # 2. Initialize and Populate Tool Registry
             tool_registry = cls._initialize_tool_registry(db_client, llm)
 
-            # --- 4. Create Reasoning Engine ---
+            # 3. Create Reasoning Engine
             reasoning_engine = await create_reasoning_engine(llm, tool_registry)
             logger.info("Reasoning engine initialized.")
 
-            # --- 5. Create and return the container instance ---
+            # 4. Return the fully configured container instance
             return cls(
+                private_token="__FACTORY__",
                 db_client=db_client,
                 llm=llm,
                 tool_registry=tool_registry,
                 reasoning_engine=reasoning_engine,
                 llm_ready_event=llm_ready_event,
+                preload_task=preload_task
             )
 
         except Exception as e:
@@ -87,30 +85,27 @@ class AppServices:
             raise
 
     @staticmethod
-    async def _initialize_clients(llm_ready_event: asyncio.Event) -> Tuple[Neo4jClient, ChatOllama]:
+    async def _initialize_clients(llm_ready_event: asyncio.Event) -> Tuple[Neo4jClient, ChatOllama, asyncio.Task]:
         """Initializes the Neo4j client and the Ollama LLM concurrently."""
         logger.info("Initializing Neo4j client and LLM...")
 
-        async def _init_llm_and_warmup() -> ChatOllama:
-            """Creates LLM instance and starts warm-up in a background task."""
-            llm = create_llm_instance(OLLAMA_MODEL_NAME, OLLAMA_BASE_URL, temperature=0)
-            asyncio.create_task(preload_model_async(llm, ready_event=llm_ready_event))
-            logger.info("LLM warm-up process started in the background.")
-            return llm
+        llm = create_llm_instance(OLLAMA_MODEL_NAME, OLLAMA_BASE_URL, temperature=0)
 
-        results = await asyncio.gather(
-            Neo4jClient.create(NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD),
-            _init_llm_and_warmup()
-        )
-        db_client, llm = results[0], results[1]
+        # FIX: Return the task instance so a strong reference can be saved
+        preload_task = asyncio.create_task(preload_model_async(llm, ready_event=llm_ready_event))
+        logger.info("LLM warm-up process started in the background.")
+
+        # Await the Neo4j client creation while the LLM warms up in the background
+        db_client = await Neo4jClient.create(NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD)
 
         if not db_client:
             raise RuntimeError("Fatal: Failed to initialize Neo4j client.")
         if not llm:
             raise RuntimeError("Fatal: Failed to initialize the LLM.")
 
-        logger.info("Successfully initialized Neo4j client and LLM instance.")
-        return db_client, llm
+        msg = "* Successfully initialized Neo4j client and LLM instance. *"
+        logger.info(f"\n{'*' * len(msg)}\n{msg}\n{'*' * len(msg)}")
+        return db_client, llm, preload_task
 
     @staticmethod
     def _initialize_tool_registry(db_client: Neo4jClient, llm: ChatOllama) -> ToolRegistry:
@@ -118,10 +113,13 @@ class AppServices:
         logger.info("Initializing and populating tool registry...")
         tool_registry = ToolRegistry(db_client=db_client, llm=llm)
 
-        # Dynamically register all tool providers from the central list.
         for provider_class in ALL_TOOL_PROVIDERS:
             tool_registry.register_provider(provider_class)
             logger.info(f"-> Registered tool provider: {provider_class.__name__}")
 
         logger.info(f"Tool registry populated with {len(ALL_TOOL_PROVIDERS)} providers.")
         return tool_registry
+
+    def get_tool_provider(self, provider_cls: Type[T]) -> Optional[T]:
+        """Delegates the provider lookup to the tool registry."""
+        return self.tool_registry.get_provider(provider_cls)

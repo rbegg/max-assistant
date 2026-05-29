@@ -5,22 +5,21 @@ Defines LangGraph tools for finding people and understanding relationships.
 """
 import json
 import logging
-from typing import Optional, Type, Dict, Any
+from typing import Dict, Any, Annotated
 
 from langchain_ollama import ChatOllama
 from langchain_core.tools import StructuredTool
-from pydantic import ValidationError, BaseModel
+from langgraph.prebuilt import InjectedState
+from pydantic import ValidationError
 
 from max_assistant.clients.neo4j_client import Neo4jClient, Neo4jClientError, Neo4jCircuitBreakerError
 from max_assistant.models.person_models import (
     PersonDetails,
-    FindPersonByNameArgs,
-    FindPersonByTitleArgs,
-    # GetRelationshipArgs,
-    GetUserInfoArgs
 )
 from max_assistant.models.location_models import LocationDetails
 from max_assistant.tools.registry import BaseToolProvider
+from max_assistant.utils.decorators import requires_db
+
 
 logger = logging.getLogger(__name__)
 
@@ -36,10 +35,11 @@ class PersonTools(BaseToolProvider):
         Initializes the toolset with a specific Neo4j client.
         """
         super().__init__(db_client, llm)
-        logger.info("PersonTools initialized with a Neo4j client.")
+        logger.debug("PersonTools initialized with a Neo4j client.")
 
 
-    def _get_relationship_description(self, path_data: Dict[str, Any]) -> str:
+    @staticmethod
+    def _get_relationship_description(path_data: Dict[str, Any]) -> str:
         """
         Synchronous helper to convert a Neo4j path into a human-readable description.
         Replaces the old _process_relationship_path.
@@ -76,16 +76,19 @@ class PersonTools(BaseToolProvider):
 
         return description
 
-    async def _find_relationship_path(self, person_id: str) -> Dict[str, Any] | None:
+    async def _find_relationship_path(self, person_id: str, user_id: str) -> Dict[str, Any] | None:
         """
-        Internal helper to find the shortest relationship path from the :User
+        Internal helper to find the shortest relationship path from the: User
         to a person, given that person's unique `id` property.
         """
-        params = {"person_id": person_id}
+        params = {
+            "person_id": person_id,
+            "user_id": user_id,
+        }
 
         # First, check for close family relationships
         family_query = """
-            MATCH (u:User), (p {id: $person_id})
+            MATCH (u:User {id: $user_id}), (p {id: $person_id})
             MATCH path = shortestPath((u)-[r:MARRIED_TO|PARENT_OF|PARTNER_OF*1..2]-(p))
             RETURN [r IN relationships(path) | type(r)] AS rel_types, p.gender as gender
             ORDER BY length(path) ASC
@@ -99,7 +102,7 @@ class PersonTools(BaseToolProvider):
 
             # If no family path, check for other relationships
             other_query = """
-                MATCH (u:User), (p {id: $person_id})
+                MATCH (u:User {id: $user_id}), (p {id: $person_id})
                 MATCH path = shortestPath((u)-[r:FRIEND_OF|SUPPORTED_BY|LIVES_WITH*1..3]-(p))
                 RETURN [r IN relationships(path) | type(r)] AS rel_types, p.gender as gender
                 ORDER BY length(path) ASC
@@ -113,18 +116,18 @@ class PersonTools(BaseToolProvider):
             logger.debug(f"No path found for id={person_id}")
             return None
 
-        except Neo4jCircuitBreakerError as e:
-            logger.warning(f"Circuit Breaker blocked relationship path search for id={person_id}.")
-            return None
+        # Allow Neo4jCircuitBreakerError exception to caller
 
         except Neo4jClientError as e:
             logger.warning(f"Database error while searching for relationship path: {e}")
             return None
 
+    @requires_db
     async def find_person_by_name(
             self,
-            first_name: Optional[str] = None,
-            last_name: Optional[str] = None
+            user_info: Annotated[dict, InjectedState("userinfo")],  # Injected by base class
+            first_name: str | None = None,
+            last_name: str |  None = None,
     ) -> str:
         """
         Finds a person, family member, friend, or support contact by their first name,
@@ -136,8 +139,10 @@ class PersonTools(BaseToolProvider):
 
         logger.info(f"Tool: find_person_by_name: fn={first_name}, ln={last_name}")
 
+        user_id = self._get_verified_user_id(user_info)
+
         query = """
-            MATCH (p:Person|Family|Friend|Support)
+            MATCH (u:User {id: $user_id})-[*1..3]-(p:Person|Family|Friend|Support)
             WHERE ($first_name IS NULL OR toLower(p.firstName) CONTAINS $first_name)
               AND ($last_name IS NULL OR toLower(p.lastName) CONTAINS $last_name)
             RETURN properties(p) AS person, labels(p) as labels
@@ -145,7 +150,8 @@ class PersonTools(BaseToolProvider):
             """
         params = {
             "first_name": first_name.lower() if first_name else None,
-            "last_name": last_name.lower() if last_name else None
+            "last_name": last_name.lower() if last_name else None,
+            "user_id": user_id,
         }
 
         try:
@@ -161,7 +167,7 @@ class PersonTools(BaseToolProvider):
                     person_id = validated_person.id
 
                     # _find_relationship_path now safely handles DB errors internally
-                    path_data = await self._find_relationship_path(person_id)
+                    path_data = await self._find_relationship_path(person_id, user_id)
                     relationship_desc = self._get_relationship_description(path_data) if path_data else "unknown"
 
                     validated_results.append({
@@ -190,8 +196,11 @@ class PersonTools(BaseToolProvider):
             logger.error(f"Unexpected error: {e}")
             return json.dumps({"error": "Data parsing failed", "details": str(e)})
 
-
-    async def find_person_by_title(self, title: str) -> str:
+    async def find_person_by_title(
+            self,
+            title: str,
+            user_info: Annotated[dict, InjectedState("userinfo")]
+    ) -> str:
         """
         Use this tool to find a person by a title, like 'Doctor' or 'Nurse'.
         This tool searches the 'title' field of all Person and Support nodes for a
@@ -199,34 +208,46 @@ class PersonTools(BaseToolProvider):
         """
         logger.info(f"Tool: find_person_by_title: title={title}")
 
+        user_id = self._get_verified_user_id(user_info)
+
         query = """
-            MATCH (p:Person|Support)
+            MATCH (u:User {id: $user_id})-[*1..2]-(p:Person|Support)
             WHERE toLower(p.title) CONTAINS $title
             RETURN properties(p) AS person
             LIMIT 10
             """
-        params = {"title": title.lower()}
+        params = {"title": title.lower(), "user_id": user_id}
 
         return await self._query_and_validate_nodes(
-            query,
-            params,
+            query=query,
             model_class=PersonDetails,
-            result_key="person"
+            result_key="person",
+            params=params,
         )
 
+    @requires_db
+    async def get_relationship_to_user(
+            self,
+            first_name: str,
+            last_name: str,
+            user_info: Annotated[dict, InjectedState("userinfo")]
+        ) -> str:
+        """
+        Use this tool to get the relationship between the user and another person referenced by First and Last Name/
+        """
 
-    async def get_relationship_to_user(self, first_name: str, last_name: str) -> str:
-        # ... [keep logging logic] ...
+        user_id = self._get_verified_user_id(user_info)
 
         find_query = """
-            MATCH (p:Person|Family|Friend|Support)
+            MATCH (u:User {id: $user_id})-[*1..3]-(p:Person|Family|Friend|Support)
             WHERE toLower(p.firstName) = $first_name AND toLower(p.lastName) = $last_name
             RETURN p.id AS person_id
             LIMIT 1
             """
         params = {
             "first_name": first_name.lower(),
-            "last_name": last_name.lower()
+            "last_name": last_name.lower(),
+            "user_id": user_id,
         }
 
         try:
@@ -241,7 +262,7 @@ class PersonTools(BaseToolProvider):
                     {"error": "Data parsing failed", "details": "Person found, but they have no 'id' property."})
 
             # 2. Now, find the path using the ID
-            path_data = await self._find_relationship_path(person_id)
+            path_data = await self._find_relationship_path(person_id, user_id)
 
             if not path_data:
                 return json.dumps(
@@ -269,7 +290,7 @@ class PersonTools(BaseToolProvider):
             logger.error(f"Unexpected error in get_relationship_to_user: {e}")
             return json.dumps({"error": "Internal_Error", "details": str(e)})
 
-
+    @requires_db
     async def get_user_info_internal(self, username: str) -> Dict[str, Any]:
         """
         Internal method to fetch user and location info.
@@ -278,8 +299,7 @@ class PersonTools(BaseToolProvider):
         logger.info("Tool: get_user_info_internal")
 
         query = """
-            MATCH (u:User)
-            where u.userName = $username
+            MATCH (u:User {userName: $username})
             OPTIONAL MATCH (u)-[:LIVES_AT]->(l:Location)
             RETURN properties(u) AS user, properties(l) AS location
             LIMIT 1
@@ -290,7 +310,7 @@ class PersonTools(BaseToolProvider):
             result = await self.db_client.execute_query(query, params)
 
             if not result.get("data"):
-                return {"error": "User not found", "details": "No :User node was found in the graph."}
+                return {"error": f"User not found.", "details": f"No User node found with userName = {username}"}
 
             data = result["data"][0]
             user_props = data.get("user")
@@ -310,14 +330,14 @@ class PersonTools(BaseToolProvider):
             }
 
         except Neo4jCircuitBreakerError as e:
-            logger.warning(f"Circuit Breaker blocked get get_user_info_internal")
+            logger.warning(f"Circuit Breaker blocked get_relationship_to_user query: {e}")
             return {"error": "Database_Unavailable", "details": str(e)}
         except Neo4jClientError as e:
             logger.error(f"Database error in get_user_info_internal: {e}")
             return {"error": "Database_Unavailable", "details": str(e)}
         except ValidationError as e:
             logger.error(f"Validation error for User/Location: {e.errors()}")
-            return {"error": "Data validation failed", "details": e.errors()}
+            return {"error": "User record failed validation.", "details": e.errors()}
         except Exception as e:
             logger.error(f"Unexpected error in get_user_info: {e}")
             return {"error": "Data parsing failed", "details": str(e)}
@@ -328,31 +348,24 @@ class PersonTools(BaseToolProvider):
         """
         return [
             StructuredTool.from_function(
-                func=None,
-                coroutine=self.find_person_by_name,
                 name="find_person_by_name",
+                func=None,
+                coroutine=self.find_person_by_name,  # No .__wrapped__ needed anymore!
                 description=self.find_person_by_name.__doc__,
-                args_schema=FindPersonByNameArgs
+                handle_tool_error=self.format_system_tool_error,
             ),
             StructuredTool.from_function(
-                func=None,
-                coroutine=self.find_person_by_title,
                 name="find_person_by_title",
+                func=None,
+                coroutine=self.find_person_by_title,  # No .__wrapped__ needed anymore!
                 description=self.find_person_by_title.__doc__,
-                args_schema=FindPersonByTitleArgs
+                handle_tool_error=self.format_system_tool_error,
             ),
-            # StructuredTool.from_function(
-            #     func=None,
-            #     coroutine=self.get_relationship_to_user,
-            #     name="get_relationship_to_user",
-            #     description=self.get_relationship_to_user.__doc__,
-            #     args_schema=GetRelationshipArgs
-            # ),
-            # StructuredTool.from_function(
-            #     func=None,
-            #     coroutine=self.get_user_info,
-            #     name="get_user_info",
-            #     description=self.get_user_info.__doc__,
-            #     args_schema=GetUserInfoArgs
-            # ),
+            StructuredTool.from_function(
+                name="get_relationship_to_user",
+                func=None,
+                coroutine=self.get_relationship_to_user,
+                description=self.get_relationship_to_user.__doc__,
+                handle_tool_error=self.format_system_tool_error,
+            ),
         ]

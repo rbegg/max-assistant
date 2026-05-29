@@ -4,153 +4,137 @@ import uvicorn
 import asyncio
 import logging
 import logging.config
+import sys
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket
 
-from max_assistant.config import (
-    PORT, HOST,
-)
-
+from max_assistant.agent.session_mgr import session_manager
+from max_assistant.config import PORT, HOST
 from max_assistant.app_services import AppServices
 from max_assistant.connection_manager import ConnectionManager
-from max_assistant.agent.agent import Agent
 from max_assistant.tools.reminder_tools import ReminderTools
 
 logger = logging.getLogger(__name__)
 
-app_services: AppServices = None
-poller_task: asyncio.Task = None
-active_user_agent: Agent = None
-
 
 def setup_logging(config_path='log_config.json'):
     """Loads logging configuration from a JSON file."""
-
-    # Make sure the 'logs' directory exists (if using a file handler)
     os.makedirs('logs', exist_ok=True)
-
     try:
         with open(config_path, 'rt') as f:
             config = json.load(f)
-
-        # Apply the configuration
         logging.config.dictConfig(config)
-
-    except FileNotFoundError:
-        print(f"Error: Config file '{config_path}' not found. Using basic config.")
-        logging.basicConfig(level=logging.INFO)
-    except json.JSONDecodeError:
-        print(f"Error: Could not parse '{config_path}'. Using basic config.")
-        logging.basicConfig(level=logging.INFO)
-    except Exception as e:
-        print(f"An error occurred during logging setup: {e}")
+    except (FileNotFoundError, json.JSONDecodeError, Exception) as e:
+        print(f"Logging setup error ({type(e).__name__}): Fallback to basic configuration.")
         logging.basicConfig(level=logging.INFO)
 
 
+# Trigger logging before building anything
 setup_logging()
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI):
+async def lifespan(fastapi_app: FastAPI):
     """
-    Manages the application's startup logic.
+    Manages the application's startup and shutdown logic safely.
+    Uses app.state to avoid volatile global scope mutations.
     """
-    global app_services, poller_task
-    logger.info("Application startup...")
+    logger.info("Application startup initiating...")
+    fastapi_app.state.app_services = None
+    fastapi_app.state.poller_task = None
 
     try:
-        app_services = await AppServices.create()
+        # 1. Initialize Service Singletons
+        services = await AppServices.create()
+        fastapi_app.state.app_services = services
 
-        # 1. Pull the instantiated ReminderTools instance straight out of the registry cache
-        # This matches how your AppServices _initialize_tool_registry loops over providers
-        reminder_tools_instance = next(
-            (p for p in app_services.tool_registry._providers if isinstance(p, ReminderTools)),
-            None
-        )
+        # 2. Extract and Bind Registry Providers
+        reminder_tools_instance: ReminderTools | None = services.get_tool_provider(ReminderTools)
 
         if reminder_tools_instance:
-            def get_current_active_agent():
-                global active_user_agent
-                return active_user_agent
-
-            logger.info("Spawning background reminder poller task from ReminderTools registry provider...")
-            poller_task = asyncio.create_task(
+            logger.info("Spawning background reminder poller task...")
+            fastapi_app.state.poller_task = asyncio.create_task(
                 reminder_tools_instance.start_reminder_poller_dynamic(
-                    get_agent_fn=get_current_active_agent,
-                    poll_interval_seconds=20)
+                    get_sessions_fn=session_manager.get_all_sessions,
+                    get_active_user_ids_fn=session_manager.get_active_user_ids,
+                    poll_interval_seconds=20
+                )
             )
         else:
-            logger.error("ReminderTools provider not found in registry! Poller task skipped.")
+            logger.error("ReminderTools provider missing from registry! Background tracking unavailable.")
 
     except Exception as e:
-        logger.critical(f"Failed to initialize application: {e}", exc_info=True)
-        # This will prevent the app from starting if init fails
-        raise e
+        logger.critical(f"CRITICAL: Application initialization crashed: {e}", exc_info=True)
+        # Flush log buffers before exiting process abnormally
+        await asyncio.sleep(0.1)
+        sys.exit(1)
 
+    yield  # --- Application Execution Phase ---
 
-    yield
+    logger.info("Application shutting down, executing resource cleanup...")
 
-    logger.info("Application shutting down...")
+    # 3. Clean and Safe Background Poller Disassembly
+    if fastapi_app.state.poller_task:
+        task: asyncio.Task = fastapi_app.state.poller_task
+        if not task.done():
+            logger.info("Cancelling active background reminder poller...")
+            task.cancel()
 
-    # 4. Cancel the background poller cleanly
-    if poller_task and not poller_task.done():
-        logger.info("Cancelling background reminder poller...")
-        poller_task.cancel()
         try:
-            await poller_task
+            # Await completion or cancellation to harvest latent task exceptions
+            await task
         except asyncio.CancelledError:
             logger.info("Reminder poller background task successfully cancelled.")
+        except Exception as e:
+            logger.error(f"Captured latent unhandled exception from reminder poller during shutdown: {e}",
+                         exc_info=True)
 
-    # 5. Close connections
-    logger.info("Closing Neo4j client connection...")
-    if app_services and app_services.db_client:
-        await app_services.db_client.close()
+    # 4. Defensive Database Client Termination
+    if fastapi_app.state.app_services and fastapi_app.state.app_services.db_client:
+        logger.info("Closing active Neo4j client connection pooling...")
+        try:
+            await fastapi_app.state.app_services.db_client.close()
+        except Exception as e:
+            logger.error(f"Error closing Neo4j connectivity pool safely: {e}", exc_info=True)
 
     logger.info("Application shutdown complete.")
 
 
+# Pass the lifespan context safely into the application builder instance
 app = FastAPI(lifespan=lifespan)
 
 
 @app.get("/health")
 def health_check():
-    """
-    Checks if the application is healthy.
-    """
+    """Validates the health and routing accessibility of the server instance."""
     return {"status": "healthy"}
 
 
 @app.websocket("/ws")
 async def websocket_endpoint(client_ws: WebSocket):
-    global app_services, active_user_agent
+    """Handles WebSocket transport layer upgrades and provisions request contexts."""
+    # Directly access the property. Type checkers accept this clean guard sequence.
+    services: AppServices | None = app.state.app_services
 
     await client_ws.accept()
-    logger.info("Client connected.")
+    logger.info("Incoming WebSocket connection accepted.")
 
-    if not app_services or not app_services.reasoning_engine:
-        logger.error("Server not fully initialized: missing services.")
-        await client_ws.close(code=1011, reason="Server error: Not initialized.")
+    # This type guard narrows the type down from 'AppServices | None' to just 'AppServices'
+    if services is None or not services.reasoning_engine:
+        logger.error("Rejecting connection: Core application singletons are uninitialized.")
+        await client_ws.close(code=1011, reason="Server error: Services not initialized.")
         return
-    logger.info("Reasoning engine and services are ready.")
 
-    manager = ConnectionManager(
-        app_services,
-        client_ws
-    )
-    manager.agent.connection_manager = manager
-
-    active_user_agent = manager.agent
-
-    logger.info(
-        f"Active user agent session captured for thread tracking: {manager.agent.conversation_state['thread_id']}"
-    )
+    logger.info("Provisioning isolated ConnectionManager infrastructure for client session.")
+    # The IDE will now be 100% happy here!
+    manager = ConnectionManager(services, client_ws)
 
     try:
         await manager.handle_connection()
     except Exception as e:
-        logger.error(f"Connection handler failed: {e}", exc_info=True)
+        logger.error(f"Fatal connection handler trap exception: {e}", exc_info=True)
     finally:
-        logger.info("Client connection handler finished.")
+        logger.info("Client WebSocket transport cleanup sequence complete.")
 
 
 if __name__ == "__main__":

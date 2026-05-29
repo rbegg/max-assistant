@@ -6,19 +6,19 @@ Defines Pydantic models for the schedule-related tools and neo4j nodes
 import json
 import asyncio
 import logging
-from langchain_ollama import ChatOllama
-from typing import Optional, Type
+from typing import Annotated
 
+from langchain_ollama import ChatOllama
 from langchain_core.tools import StructuredTool
-from pydantic import ValidationError, BaseModel
+from langgraph.prebuilt import InjectedState
 
 from max_assistant.clients.neo4j_client import Neo4jClient
 from max_assistant.models.schedule_models import (
     Appointment,
     DailyRoutine,
-    CreateAppointmentArgs
 )
-from max_assistant.tools.registry import BaseToolProvider
+from max_assistant.tools.base_provider import BaseToolProvider
+
 
 logger = logging.getLogger(__name__)
 
@@ -29,9 +29,13 @@ class ScheduleTools(BaseToolProvider):
         Initializes the toolset with a specific Neo4j client.
         """
         super().__init__(db_client, llm)
-        logger.info("PersonTools initialized with a Neo4j client.")
+        logger.debug("PersonTools initialized with a Neo4j client.")
 
-    async def get_appointments_for_date(self, target_date: str) -> str:
+    async def get_appointments_for_date(
+            self,
+            target_date: str,
+            user_info: Annotated[dict, InjectedState("userinfo")]
+    ) -> str:
         """
         Use this tool if the user asks specifically for 'appointments'
         and NOT for their general 'schedule'. For general schedule
@@ -39,75 +43,94 @@ class ScheduleTools(BaseToolProvider):
         The target_date arg must be a valid iso date string.
         """
         logger.info(f"Tool: get_appointments_for_date for {target_date}")
+
+        user_id = self._get_verified_user_id(user_info)
+
+
         query = """
                 WITH datetime($targetDate) AS dt
-                    OPTIONAL MATCH (d: Day {year : dt.year
-                   , month : dt.month
-                   , day : dt.day})
-                    OPTIONAL MATCH (d)-[:HAS_APPOINTMENT]-
-                   >(appt:Appointment)
-                WITH appt
-                WHERE appt IS NOT NULL
-                    RETURN properties(appt) AS appointment \
+                MATCH (u:User {id: $user_id})
+                      -[:HAS_YEAR]->(:Year {year: dt.year})
+                      -[:HAS_MONTH]->(:Month {month: dt.month})
+                      -[:HAS_DAY]->(:Day {day: dt.day})
+                      -[:HAS_APPOINTMENT]->(appt:Appointment)
+                RETURN properties(appt) AS appointment  
                 """
 
-        params = {"targetDate": target_date}
+        params = {
+            "targetDate": target_date,
+            "user_id": user_id,
+        }
 
         # Call the same helper with a different model and key
         return await self._query_and_validate_nodes(
-            query,
-            params,
+            query=query,
             model_class=Appointment,
-            result_key="appointment"
+            result_key="appointment",
+            params=params,
         )
 
 
-    async def get_routines_for_date(self, target_date: str) -> str:
+    async def get_routines_for_date(
+            self,
+            target_date: str,
+            user_info: Annotated[dict, InjectedState("userinfo")]
+        ) -> str:
         """
         Use this tool if the user asks specifically for 'activities', 'daily routines',
         'meal times', or 'medication times'. For general schedule
         questions, use 'get_full_schedule'. The target_date arg must be a valid iso date string.
         """
         logger.info(f"Tool: get_routines_for_date for {target_date}")
+
+        user_id = self._get_verified_user_id(user_info)
+
         query = """
+                MATCH (u:User {id: $user_id})
                 WITH datetime($targetDate) AS dt
                 WITH CASE dt.dayOfWeek
                     WHEN 1 THEN 'Monday' WHEN 2 THEN 'Tuesday' WHEN 3 THEN 'Wednesday'
                     WHEN 4 THEN 'Thursday' WHEN 5 THEN 'Friday' WHEN 6 THEN 'Saturday'
-                    ELSE 'Sunday' \
+                    ELSE 'Sunday' 
                 END AS dowString
-                MATCH (u:User)
+                MATCH (u:User {id: $user_id})
                 OPTIONAL MATCH (u)-[:ATTENDS]->(routine:DailyRoutine)
                 WHERE dowString IN routine.dayOfWeek
                 WITH routine WHERE routine IS NOT NULL
-                RETURN properties(routine) AS routine \
+                RETURN properties(routine) AS routine 
                 """
 
-        params = {"targetDate": target_date}
+        params = {
+            "targetDate": target_date,
+            "user_id": user_id,
+        }
 
         # Call the helper
         return await self._query_and_validate_nodes(
-            query,
-            params,
+            query=query,
             model_class=DailyRoutine,
-            result_key="routine"
+            result_key="routine",
+            params=params,
         )
 
-
-    async def get_full_schedule(self, target_date: str) -> str:
+    async def get_full_schedule(
+            self,
+            target_date: str,
+            user_info: Annotated[dict, InjectedState("userinfo")],
+        ) -> str:
         """
         Use this as the DEFAULT tool for any general schedule question,
-        like 'What's my schedule?', 'What's on today?', or 'Am I busy tomorrow?'.
+        like 'What's my schedule?', 'What's on today?', or 'Am I busy tomorrow?'
         It combines appointments and daily routines into a single, sorted list.
         The target_date arg must be a valid iso date string.
         """
         logger.info(f"Tool: get_full_schedule for {target_date}")
 
         try:
-            # Run both tools at the same time
+            # Run both tools concurrently, passing the same args object downstream
             results = await asyncio.gather(
-                self.get_appointments_for_date(target_date),
-                self.get_routines_for_date(target_date, )
+                self.get_appointments_for_date(target_date, user_info),
+                self.get_routines_for_date(target_date, user_info)
             )
 
             appts_json_str, routines_json_str = results
@@ -124,10 +147,13 @@ class ScheduleTools(BaseToolProvider):
                 logger.error(f"Error from get_routines: {routines}")
                 return json.dumps(routines)
 
+            appts_list = appts if isinstance(appts, list) else []
+            routines_list = routines if isinstance(routines, list) else []
+
             # Combine the two lists
             combined_list = []
-            for item in appts + routines:
-                combined_list.append({key: item[key] for key in ['time', 'title', 'duration', 'details']})
+            for item in appts_list + routines_list:
+                combined_list.append({key: item.get(key) for key in ['time', 'title', 'duration', 'details']})
 
             # Sort the combined list by 'time'
             # We use .get() with a default to prevent errors if a key is missing
@@ -145,73 +171,91 @@ class ScheduleTools(BaseToolProvider):
             logger.error(f"Unexpected error in get_full_schedule: {e}", exc_info=True)
             return json.dumps({"error": f"Internal error combining schedule: {error_type}"})
 
-
     async def create_appointment(
             self,
             title: str,
+            time: str,
             date: str,
-            details: Optional[str] = None,
-            duration: Optional[int] = None
+            details: str | None,
+            duration: int | None,
+            user_info: Annotated[dict, InjectedState("userinfo")],
     ) -> str:
         """
         Creates a new appointment for the user.
         """
-        # LangChain/LangGraph will automatically validate the LLM's
-        # input using the 'CreateAppointmentArgs' type hint on the decorator.
+        logger.info(f"Tool: Calling create_appointment with args: {title}")
 
-        print(f"Tool: Calling create_appointment with args: {title}")
+        user_id = self._get_verified_user_id(user_info)
 
-        # We can reliably build the params dict for our query
         params = {
             "title": title,
+            "time": time,
             "date": date,
             "details": details,
-            "duration": duration
+            "duration": duration,
+            "user_id": user_id
         }
 
         query = """
-                WITH date($date) AS dt
-                MERGE (d:Day {year: dt.year, month: dt.month, day: dt.day})
-                CREATE (a:Appointment {
-                    id: randomUUID(),
-                    title: $title,
-                    date: $date,
-                    details: $details,
-                    duration: $duration
-                })
-                MERGE (d)-[:HAS_APPOINTMENT]->(a)
-                RETURN a.id AS new_appointment_id
+            // 1. Fetch the User node first to anchor the transaction
+            MATCH (u:User {id: $user_id})
+            
+            // 2. Instantiate your date variable cleanly as 'd' so it matches downstream properties
+            WITH u, date($date) AS d
+            
+            // 3. MERGE the entire time tree branch securely relative to this specific User
+            MERGE (u)-[:HAS_YEAR]->(y:Year {year: d.year})
+            MERGE (y)-[:HAS_MONTH]->(m:Month {month: d.month, name: format(d, 'MMM'), year: d.year})
+            MERGE (m)-[:HAS_DAY]->(day:Day {day: d.day, month: d.month, year: d.year})
+            
+            // 4. Create the new Appointment node inside the active transaction scope
+            CREATE (a:Appointment {
+                id: randomUUID(),
+                title: $title,
+                time: $time,
+                date: $date,
+                details: $details,
+                duration: $duration
+            })
+            
+            // 5. Securely link the unique timeline leaf node to the new appointment record
+            MERGE (day)-[:HAS_APPOINTMENT]->(a)
                 """
 
         return await self._safe_execute_query(query, params)
 
-
-    async def get_activities_info(self) -> str:
+    async def get_activities_info(self, user_info: Annotated[dict, InjectedState("userinfo")]) -> str:
         """
         Use this tool to get details about available Activities.
-        The rating is an indicator of how much the user dislikes or enjoys an activity, favorites should include enjoy and
-        ok ratings but exclude dislike.  If responding with details about a disliked activity, the users rating should be
-        gently acknowledged, for example:  "There is bingo at 7 pm, but I know you dislike it."
+        The rating is an indicator of how much the user dislikes or enjoys an activity, favorites should include
+        ratings with values of 'enjoy' and 'ok' but exclude 'dislike'.  If responding with details about a disliked
+        activity, the user's rating should be
+        gently acknowledged, for example, "There is bingo at 7 pm, but I know you dislike it."
         Pay attention to the day of the week the activity is offered and the current date.
         Use this to answer questions about activities like 'What are my favorite activities?' or to suggest activities.
         """
-        logger.info(f"Tool: get_routine_info for type")
+        logger.info("Tool: get_routine_info for type")
 
         query = """
-                MATCH (u:User)
+                MATCH (u:User {id: $user_id})
                 OPTIONAL MATCH (u)-[:ATTENDS]->(routine:DailyRoutine)
                 WHERE routine.type in $type_list
                 WITH routine WHERE routine IS NOT NULL
                 RETURN properties(routine) AS routine 
                 """
 
-        params = {"type_list": ['activity', 'exercise']}
+        user_id = self._get_verified_user_id(user_info)
+
+        params = {
+            "type_list": ['activity', 'exercise'],
+            "user_id": user_id
+        }
 
         return await self._query_and_validate_nodes(
-            query,
-            params,
+            query=query,
             model_class=DailyRoutine,
-            result_key="routine"
+            result_key="routine",
+            params=params,
         )
 
     def get_tools(self) -> list:
@@ -223,31 +267,35 @@ class ScheduleTools(BaseToolProvider):
                 func=None,
                 coroutine=self.get_appointments_for_date,
                 name="get_appointments_for_date",
-                description=self.get_appointments_for_date.__doc__
+                description=self.get_appointments_for_date.__doc__,
+                handle_tool_error=self.format_system_tool_error,
             ),
             StructuredTool.from_function(
                 func=None,
                 coroutine=self.get_routines_for_date,
                 name="get_routines_for_date",
-                description=self.get_routines_for_date.__doc__
+                description=self.get_routines_for_date.__doc__,
+                handle_tool_error=self.format_system_tool_error,
             ),
             StructuredTool.from_function(
                 func=None,
                 coroutine=self.get_full_schedule,
                 name="get_full_schedule",
-                description=self.get_full_schedule.__doc__
+                description=self.get_full_schedule.__doc__,
+                handle_tool_error=self.format_system_tool_error,
             ),
             StructuredTool.from_function(
                 func=None,
                 coroutine=self.create_appointment,
                 name="create_appointment",
                 description=self.create_appointment.__doc__,
-                args_schema=CreateAppointmentArgs
+                handle_tool_error=self.format_system_tool_error,
             ),
             StructuredTool.from_function(
                 func=None,
                 coroutine=self.get_activities_info,
                 name="get_activities_info",
-                description=self.get_activities_info.__doc__
+                description=self.get_activities_info.__doc__,
+                handle_tool_error=self.format_system_tool_error,
             )
         ]
