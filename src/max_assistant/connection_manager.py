@@ -24,9 +24,9 @@ from fastapi import WebSocket, WebSocketDisconnect
 from max_assistant.agent.agent import Agent
 from max_assistant.clients.stt_client import STTClient
 from max_assistant.clients.tts_client import TTSClient
-from .app_services import AppServices
-from .tools import PersonTools
-from max_assistant.agent.sessions import active_sessions
+from max_assistant.agent.session_mgr import session_manager
+from max_assistant.app_services import AppServices
+from max_assistant.tools import PersonTools
 from max_assistant.config import TTS_VOICE
 
 logger = logging.getLogger(__name__)
@@ -203,11 +203,11 @@ class ConnectionManager:
 
                         if "error" in user_data:
                             logging.error(
-                                f"Failed to get user record, closing connection: Details {user_data["error"]}."
+                                f"Failed to get user record, closing connection: Details {user_data['error']}."
                             )
                             # Notify the client before closing
                             error_payload = {
-                                "data": f"Failed to get user record, closing connection: Details {user_data["error"]}.",
+                                "data": f"Failed to get user record, closing connection: Details {user_data['error']}.",
                                 "source": "system"
                             }
                             await self.ws.send_text(json.dumps(error_payload))
@@ -227,8 +227,7 @@ class ConnectionManager:
                             # Register globally so the reminder poller can find this agent
                             user_id = user_data.get("user", {}).get("id")
                             if user_id:
-                                active_sessions[user_id] = self.agent
-                                logger.info(f"Session registered globally for user_id: {user_id}")
+                                session_manager.register(user_id, self.agent)
 
                             continue  # Move to next input
 
@@ -257,9 +256,8 @@ class ConnectionManager:
             # Cleanup registration when connection ends
             if self.agent and self.agent.conversation_state:
                 user_id = self.agent.conversation_state.get("userinfo", {}).get("user", {}).get("id")
-                if user_id and user_id in active_sessions:
-                    del active_sessions[user_id]
-                    logger.info(f"Session unregistered for user_id: {user_id}")
+                if user_id:
+                    session_manager.unregister(user_id, self.agent)
             logger.info("Text input handler loop has stopped.")
 
     async def _agent_loop(self):
@@ -311,7 +309,7 @@ class ConnectionManager:
 
 
     async def _external_event_loop(self):
-        """Listens for system-generated events, processes them via the Agent, and sends to client."""
+        """Listens for system-generated events, processes them via the Agent, and sends to the client."""
         try:
             while not self._shutdown_event.is_set():
                 # Wait for an external event payload from the poller

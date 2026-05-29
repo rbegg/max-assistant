@@ -9,7 +9,7 @@ import logging
 import asyncio
 from langchain_ollama import ChatOllama
 from langchain_core.runnables import RunnableSerializable
-from typing import Any, Dict, Tuple
+from typing import Tuple
 
 from max_assistant.config import (
     NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD,
@@ -19,7 +19,6 @@ from max_assistant.clients.neo4j_client import Neo4jClient
 from max_assistant.clients.ollama_preloader import create_llm_instance, preload_model_async
 from max_assistant.tools import ALL_TOOL_PROVIDERS
 from max_assistant.tools.registry import ToolRegistry
-from max_assistant.tools.person_tools import PersonTools
 from max_assistant.agent.graph import create_reasoning_engine
 
 logger = logging.getLogger(__name__)

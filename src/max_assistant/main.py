@@ -7,15 +7,14 @@ import logging.config
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket
 
+from max_assistant.agent.session_mgr import session_manager
 from max_assistant.config import (
     PORT, HOST,
 )
 
 from max_assistant.app_services import AppServices
 from max_assistant.connection_manager import ConnectionManager
-from max_assistant.agent.agent import Agent
 from max_assistant.tools.reminder_tools import ReminderTools
-from max_assistant.agent.sessions import active_sessions
 
 logger = logging.getLogger(__name__)
 
@@ -70,14 +69,17 @@ async def lifespan(_: FastAPI):
         )
 
         if reminder_tools_instance:
-            # FIX: Return the active_sessions dictionary
             def get_active_sessions():
-                return active_sessions
+                return session_manager.get_all_sessions()
+
+            def get_active_user_ids():
+                return session_manager.get_active_user_ids()
 
             logger.info("Spawning background reminder poller task from ReminderTools registry provider...")
             poller_task = asyncio.create_task(
                 reminder_tools_instance.start_reminder_poller_dynamic(
-                    get_sessions_fn=get_active_sessions,  # Pass the dict getter
+                    get_sessions_fn=get_active_sessions,
+                    get_active_user_ids_fn = get_active_user_ids,
                     poll_interval_seconds=20
                 )
             )

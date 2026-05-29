@@ -125,7 +125,7 @@ class ReminderTools(BaseToolProvider):
             )
         ]
 
-    async def start_reminder_poller_dynamic(self, get_sessions_fn, poll_interval_seconds: int = 20):
+    async def start_reminder_poller_dynamic(self, get_sessions_fn, get_active_user_ids_fn, poll_interval_seconds: int = 20):
         """
         A continuous, non-blocking background loop that polls Neo4j for pending reminders for all users
         and routes them to the correct user session.
@@ -134,24 +134,30 @@ class ReminderTools(BaseToolProvider):
 
         check_query = """
                       WITH datetime($now) AS now
-                          MATCH (u: User)-[:HAS_YEAR]- \
-                         >()-[:HAS_MONTH]- \
-                         >()-[:HAS_DAY]- \
-                         >()-[:HAS_TASK]- \
-                         >(t:Task {status: 'PENDING' \
-                         , type : 'REMINDER'})
-                      WHERE t.due_time <= now
+                          MATCH (u: User)-[:HAS_YEAR]->()-[:HAS_MONTH]->()-[:HAS_DAY]->()-[:HAS_TASK]->(t:Task)
+                      WHERE t.due_time <= now 
+                          AND u.id in $user_id_list
+                          AND t.type = 'REMINDER'
+                          AND t.status = 'PENDING'
                       SET t.status = 'COMPLETED'
-                          RETURN t.text AS text, t.id AS id, u.id AS user_id
+                      RETURN t.text AS text, t.id AS id, u.id AS user_id
                       """
 
         while True:
             try:
-                # 1. Fetch the active sessions dictionary via the getter
                 active_sessions = get_sessions_fn()
-                params = {"now": datetime.now().isoformat()}
+                active_user_ids = get_active_user_ids_fn()
 
-                # 2. Execute the query to find pending tasks
+                if not active_user_ids:
+                    logger.debug("No active sessions online. Skipping reminder database poll.")
+                    await asyncio.sleep(poll_interval_seconds)
+                    continue
+
+                params = {"now": datetime.now().isoformat(),
+                          "user_id_list": active_user_ids
+                          }
+
+                # Execute the query to find pending tasks
                 result = await self.db_client.execute_query(check_query, params)
 
                 tasks_due = result.get("data", [])
@@ -162,16 +168,14 @@ class ReminderTools(BaseToolProvider):
 
                     logger.info(f"Poller detected matured timer [{task_id}] for user [{user_id}]")
 
-                    # 3. Look up the specific agent for this user
-                    target_agent = active_sessions.get(user_id)
-
                     payload = {"task_id": task_id, "text": reminder_text}
 
-                    # 4. Route the event to the correct connection manager
-                    if target_agent and target_agent.connection_manager:
-                        await target_agent.connection_manager.submit_external_event(payload)
-                    else:
-                        logger.warning(f"Reminder triggered for user [{user_id}], but no active connection found.")
+                    for target_agent in active_sessions.get(user_id):
+                        # Route the event to the correct connection manager
+                        if target_agent and target_agent.connection_manager:
+                            await target_agent.connection_manager.submit_external_event(payload)
+                        else:
+                            logger.warning(f"Reminder triggered for user [{user_id}], but no active connection found.")
 
             except Neo4jCircuitBreakerError:
                 logger.debug("Reminder poller paused: Database circuit is OPEN.")
