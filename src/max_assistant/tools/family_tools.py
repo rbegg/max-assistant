@@ -29,7 +29,7 @@ class FamilyTools(BaseToolProvider):
         Initializes the toolset with a specific Neo4j client.
         """
         super().__init__(db_client, llm)
-        logger.info("FamilyTools initialized with a Neo4j client.")
+        logger.debug("FamilyTools initialized with a Neo4j client.")
 
 
     async def get_my_parents(self, user_info: Annotated[dict, InjectedState("userinfo")]) -> str:

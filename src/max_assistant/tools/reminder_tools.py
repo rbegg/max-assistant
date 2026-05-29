@@ -27,7 +27,7 @@ class ReminderTools(BaseToolProvider):
 
     def __init__(self, db_client, llm=None):
         super().__init__(db_client, llm)
-        logger.info("ReminderTools initialized with a Neo4j client.")
+        logger.debug("ReminderTools initialized with a Neo4j client.")
 
     @requires_db
     async def schedule_reminder(

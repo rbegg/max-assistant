@@ -9,7 +9,7 @@ including registration, dependency injection into providers' constructors, and
 access to all tools provided by the registered providers.
 """
 import logging
-from typing import List, Type
+from typing import List, Optional, Type, TypeVar
 
 from langchain_core.tools import BaseTool
 from langchain_ollama import ChatOllama
@@ -17,6 +17,7 @@ from langchain_ollama import ChatOllama
 from max_assistant.clients.neo4j_client import Neo4jClient
 from max_assistant.tools.base_provider import BaseToolProvider
 
+T = TypeVar('T')
 
 logger = logging.getLogger(__name__)
 
@@ -49,10 +50,20 @@ class ToolRegistry:
         # Eagerly collect tools upon registration.
         new_tools = provider_instance.get_tools()
         self._tools.extend(new_tools)
-        logger.info(f"Registered {len(new_tools)} tools from {provider_class.__name__}.")
+        logger.debug(f"Registered {len(new_tools)} tools from {provider_class.__name__}.")
 
     def get_all_tools(self) -> List[BaseTool]:
         """
         Returns a flat list of all tools from all registered providers.
         """
         return self._tools
+
+    def get_provider(self, provider_cls: Type[T]) -> Optional[T]:
+        """
+        Safely retrieves a registered tool provider instance by its class type.
+        Returns None if the provider is not found.
+        """
+        return next(
+            (p for p in self._providers if isinstance(p, provider_cls)),
+            None
+        )

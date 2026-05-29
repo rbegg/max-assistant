@@ -37,7 +37,7 @@ class GeneralQueryTools(BaseToolProvider):
             raise ValueError("GeneralQueryTools strictly requires an LLM instance to generate Cypher.")
 
         self.cypher_generation_chain = CYPHER_GENERATION_PROMPT | llm
-        logger.info("GeneralQueryTools initialized with Neo4j client and LLM.")
+        logger.debug("GeneralQueryTools initialized with Neo4j client and LLM.")
 
     @staticmethod
     def _parse_cypher_from_response(response_content: str) -> str:

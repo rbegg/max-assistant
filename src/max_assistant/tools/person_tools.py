@@ -35,7 +35,7 @@ class PersonTools(BaseToolProvider):
         Initializes the toolset with a specific Neo4j client.
         """
         super().__init__(db_client, llm)
-        logger.info("PersonTools initialized with a Neo4j client.")
+        logger.debug("PersonTools initialized with a Neo4j client.")
 
 
     @staticmethod
