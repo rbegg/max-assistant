@@ -230,6 +230,5 @@ async def create_reasoning_engine(
 
     # 5. Compile and return
     compiled_graph = workflow.compile(checkpointer=checkpointer)
-    compiled_graph.db_client = tool_registry.db_client
 
     return compiled_graph
