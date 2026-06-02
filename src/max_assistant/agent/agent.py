@@ -7,7 +7,7 @@ manages conversation state. It provides a clean interface for text-based interac
 
 import logging
 from uuid import uuid4
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 
 from langchain_core.messages import BaseMessage
 from max_assistant.config import DEFAULT_USERNAME, TTS_VOICE
@@ -106,33 +106,23 @@ class Agent:
         logger.info(f"Poller event triggered for thread {inputs.get('thread_id')}")
         return await self._execute_graph_turn(inputs, config)
 
-    # FIX 3: Update type mapping bounds to explicitly accept GraphState containers
     async def _execute_graph_turn(self, inputs: GraphState, config: dict[str, Any]) -> str:
         """Internal helper to execute LangGraph and sync state cleanly."""
         try:
-            # Type safe replication of existing in-memory history elements
-            local_history: List[BaseMessage] = list(self.conversation_state.get("messages", []))
-
-            # Execute the graph turn smoothly
+            # Execute the graph turn smoothly. LangGraph handles loading the
+            # historical checkpoint state internally via the provided config.
             final_state = await self.reasoning_engine.ainvoke(inputs, config=config)
 
             if isinstance(final_state, dict):
-                new_messages = final_state.get("messages", [])
-
-                # Merge flat configuration parameters
+                # Update the flat configuration parameters and tracking states
                 self.conversation_state.update(final_state)
 
-                # FIX: Streamlined list comprehension clears the unreachable code warning
-                # while keeping strict type verification for List[BaseMessage]
-                resolved_turn_messages: List[BaseMessage] = [
+                # Extract and validate messages directly from the graph's output state.
+                # LangGraph's state reducer has already cleanly handled the historical accumulation.
+                new_messages = final_state.get("messages", [])
+                self.conversation_state["messages"] = [
                     msg for msg in new_messages if isinstance(msg, BaseMessage)
                 ]
-
-                # Merge the history tracking arrays cleanly
-                self.conversation_state["messages"] = local_history + resolved_turn_messages
-
-                # Merge the history tracking arrays cleanly without mathematical concatenation issues
-                self.conversation_state["messages"] = local_history + resolved_turn_messages
             else:
                 logger.error(f"Engine returned invalid state type: {type(final_state)}")
                 return "" if inputs.get("is_background") else "I encountered an internal logic error."

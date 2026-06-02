@@ -1,5 +1,5 @@
 # max_assistant/agent/checkpointer.py
-
+import asyncio
 import base64
 import json
 import logging
@@ -67,15 +67,16 @@ class Neo4jCheckpointSaver(BaseCheckpointSaver[str]):
             metadata=metadata,
         )
 
+
     def get_tuple(self, config: RunnableConfig) -> Optional[CheckpointTuple]:
-        """Synchronously fetches a checkpoint tuple matching the config."""
-        raise NotImplementedError("Use aget_tuple instead.")
+        """Synchronously fetches a checkpoint tuple using an event loop bridge."""
+        return self._run_synchronously(self.aget_tuple(config))
 
     async def alist(
             self,
             config: Optional[RunnableConfig],
             *,
-            filter: Optional[Dict[str, Any]] = None,
+            query_filter: Optional[Dict[str, Any]] = None,
             before: Optional[RunnableConfig] = None,
             limit: Optional[int] = None
     ) -> AsyncIterator[CheckpointTuple]:
@@ -103,16 +104,42 @@ class Neo4jCheckpointSaver(BaseCheckpointSaver[str]):
                 metadata=json.loads(record["metadata"])
             )
 
+    def _run_synchronously(self, coro: Any) -> Any:
+        """Helper to execute an asynchronous coroutine inside a synchronous context safely."""
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+        if loop.is_running():
+            # If called within an actively running loop, bridge execution using nest_asyncio
+            # or execute via run_coroutine_threadsafe if run from an external worker thread.
+            import nest_asyncio
+            nest_asyncio.apply()
+
+        return loop.run_until_complete(coro)
+
     def list(
             self,
             config: Optional[RunnableConfig],
             *,
-            filter: Optional[Dict[str, Any]] = None,
+            query_filter: Optional[Dict[str, Any]] = None,
             before: Optional[RunnableConfig] = None,
             limit: Optional[int] = None
     ) -> Iterator[CheckpointTuple]:
         """Synchronously evaluates checkpoints matching filters."""
-        raise NotImplementedError("Use alist instead.")
+
+        # Because alist returns an AsyncIterator, we collect the items
+        # inside an async helper wrapper before resolving synchronously.
+        async def _collect_list():
+            items = []
+            async for item in self.alist(config, query_filter=query_filter, before=before, limit=limit):
+                items.append(item)
+            return items
+
+        items_list = self._run_synchronously(_collect_list())
+        return iter(items_list)
 
     async def aput(
             self,
@@ -124,30 +151,37 @@ class Neo4jCheckpointSaver(BaseCheckpointSaver[str]):
             **kwargs: Any,
     ) -> RunnableConfig:
         """Asynchronously writes a checkpoint into Neo4j and chains chronological relationships."""
+        logger.debug(f"Config State = {config} checkpoint = {checkpoint}")
         thread_id = config.get("configurable", {}).get("thread_id")
         checkpoint_ns = config.get("configurable", {}).get("checkpoint_ns", "")
-        checkpoint_id = config.get("configurable", {}).get("checkpoint_id") or checkpoint.get("id")
+        parent_checkpoint_id = config.get("configurable", {}).get("checkpoint_id", None)
+        checkpoint_id = checkpoint.get("id", "")
 
-        # CYPHER FIX: Automatically discover the latest chronological checkpoint for this session
-        # and create a graph relationship linking them together seamlessly
+        if parent_checkpoint_id:
+            logger.info(f"parent checkpoint_id = {parent_checkpoint_id}")
+        else:
+            logger.info(f"parent checkpoint_id = None ")
+
         query = """
         MERGE (c:Checkpoint {thread_id: $thread_id, checkpoint_ns: $checkpoint_ns, checkpoint_id: $checkpoint_id})
-        SET c.checkpoint = $checkpoint,
-            c.serde_type = $serde_type,
-            c.metadata = $metadata,
-            c.created_at = timestamp()
+            SET c.checkpoint = $checkpoint,
+                c.serde_type = $serde_type,
+                c.metadata = $metadata,
+                c.created_at = timestamp()
         WITH c
-        OPTIONAL MATCH (p:Checkpoint {thread_id: $thread_id, checkpoint_ns: $checkpoint_ns})
-        WHERE p.checkpoint_id <> $checkpoint_id AND p.created_at < c.created_at
-        WITH c, p ORDER BY p.created_at DESC LIMIT 1
-        FOREACH (x IN BACKGROUND_SYSTEM_POLLER_METRICS_GATEWAY | 
+        OPTIONAL MATCH (p:Checkpoint {
+            thread_id: $thread_id, 
+            checkpoint_ns: $checkpoint_ns, 
+            checkpoint_id: $parent_checkpoint_id
+        })
+        
+        // Execute the subquery conditionally only if the parent node 'p' was found
+        CALL (p, c) {
+            WITH p, c WHERE p IS NOT NULL
             MERGE (p)-[:PARENT_OF]->(c)
             SET c.parent_checkpoint_id = p.checkpoint_id
-        )
-        RETURN c
+        }
         """
-        # Adjusted FOREACH block checks trace bounds natively
-        query = query.replace("BACKGROUND_SYSTEM_POLLER_METRICS_GATEWAY", "CASE WHEN p IS NOT NULL THEN [1] ELSE [] END")
 
         serde_type, serialized_bytes = self.encoder.dumps_typed(checkpoint)
         checkpoint_base64 = base64.b64encode(serialized_bytes).decode("utf-8")
@@ -157,8 +191,9 @@ class Neo4jCheckpointSaver(BaseCheckpointSaver[str]):
             "checkpoint_ns": checkpoint_ns,
             "checkpoint_id": checkpoint_id,
             "checkpoint": checkpoint_base64,
+            "parent_checkpoint_id": parent_checkpoint_id,
             "serde_type": serde_type,
-            "metadata": json.dumps(extended_metadata)
+            "metadata": json.dumps(metadata)
         }
 
         await self.db_client.execute_query(query, params)
@@ -175,7 +210,9 @@ class Neo4jCheckpointSaver(BaseCheckpointSaver[str]):
             **kwargs: Any
     ) -> RunnableConfig:
         """Synchronously writes a checkpoint into Neo4j."""
-        raise NotImplementedError("Use aput instead.")
+        return self._run_synchronously(
+            self.aput(config, checkpoint, metadata, new_versions, *args, **kwargs)
+        )
 
     async def aput_writes(
             self,
@@ -247,7 +284,9 @@ class Neo4jCheckpointSaver(BaseCheckpointSaver[str]):
             **kwargs: Any
     ) -> None:
         """Synchronously writes intermediate node execution writes into Neo4j."""
-        raise NotImplementedError("Use aput_writes instead.")
+        return self._run_synchronously(
+            self.aput_writes(config, writes, task_id, task_path, *args, **kwargs)
+        )
 
     def get_next_version(self, current: Any, channel: Any) -> str:
         """
