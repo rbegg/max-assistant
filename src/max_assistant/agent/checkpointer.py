@@ -128,22 +128,6 @@ class Neo4jCheckpointSaver(BaseCheckpointSaver[str]):
         checkpoint_ns = config.get("configurable", {}).get("checkpoint_ns", "")
         checkpoint_id = config.get("configurable", {}).get("checkpoint_id") or checkpoint.get("id")
 
-        # Extraction logic for debugging records...
-        channel_values = checkpoint.get("channel_values", {})
-        messages = channel_values.get("messages", [])
-        debug_log_lines = []
-        if messages:
-            msg_list = messages if isinstance(messages, list) else [messages]
-            for msg in msg_list:
-                if hasattr(msg, "type") and hasattr(msg, "content"):
-                    debug_log_lines.append(f"[{msg.type.upper()}]: {msg.content}")
-                elif isinstance(msg, dict) and "content" in msg:
-                    debug_log_lines.append(f"[{msg.get('role', 'unknown').upper()}]: {msg['content']}")
-        complete_text_record = "\n".join(debug_log_lines)
-
-        extended_metadata = dict(metadata)
-        extended_metadata["debug_chat_record"] = complete_text_record
-
         # CYPHER FIX: Automatically discover the latest chronological checkpoint for this session
         # and create a graph relationship linking them together seamlessly
         query = """
