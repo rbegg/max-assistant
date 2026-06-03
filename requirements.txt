@@ -11,6 +11,7 @@ langchain-core
 langchain-ollama
 langgraph
 neo4j
+nest_asyncio
 ollama
 pydantic
 python-dotenv

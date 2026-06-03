@@ -15,6 +15,7 @@ chat applications or AI-powered assistants.
 
 import logging
 import json
+from linecache import cache
 from typing import Any, Literal
 import uuid
 
@@ -30,8 +31,9 @@ from max_assistant.agent.prompts import ChatPromptTemplate, MessagesPlaceholder,
 from max_assistant.agent.state import GraphState
 from max_assistant.tools.registry import ToolRegistry
 from max_assistant.tools.time_tools import get_current_datetime
-from max_assistant.config import MESSAGE_PRUNING_LIMIT
 from max_assistant.utils.datetime_utils import current_datetime
+from max_assistant.agent.checkpointer import Neo4jCheckpointSaver
+from max_assistant.agent.cached_checkpointer import CachedCheckpointSaver
 
 logger = logging.getLogger(__name__)
 
@@ -225,11 +227,12 @@ async def create_reasoning_engine(
     )
     workflow.add_edge("execute_tools", "agent")
 
-    # 5. Compile and return
-    compiled_graph = workflow.compile()
+    # Instantiate our custom Neo4j Checkpointer
+    native_neo4j_checkpointer = Neo4jCheckpointSaver(tool_registry.db_client)
 
-    # Expose the db_client on the compiled graph instance if available
-    # to maintain clean reference mapping inside the tool layer
-    compiled_graph.db_client = tool_registry.db_client
+    cached_checkpointer = CachedCheckpointSaver(native_neo4j_checkpointer)
+
+    # 5. Compile and return
+    compiled_graph = workflow.compile(checkpointer=cached_checkpointer)
 
     return compiled_graph
