@@ -157,11 +157,6 @@ class Neo4jCheckpointSaver(BaseCheckpointSaver[str]):
         parent_checkpoint_id = config.get("configurable", {}).get("checkpoint_id", None)
         checkpoint_id = checkpoint.get("id", "")
 
-        if parent_checkpoint_id:
-            logger.info(f"parent checkpoint_id = {parent_checkpoint_id}")
-        else:
-            logger.info(f"parent checkpoint_id = None ")
-
         query = """
         MERGE (c:Checkpoint {thread_id: $thread_id, checkpoint_ns: $checkpoint_ns, checkpoint_id: $checkpoint_id})
             SET c.checkpoint = $checkpoint,
@@ -174,8 +169,7 @@ class Neo4jCheckpointSaver(BaseCheckpointSaver[str]):
             checkpoint_ns: $checkpoint_ns, 
             checkpoint_id: $parent_checkpoint_id
         })
-        
-        // Execute the subquery conditionally only if the parent node 'p' was found
+
         CALL (p, c) {
             WITH p, c WHERE p IS NOT NULL
             MERGE (p)-[:PARENT_OF]->(c)
@@ -186,6 +180,7 @@ class Neo4jCheckpointSaver(BaseCheckpointSaver[str]):
         serde_type, serialized_bytes = self.encoder.dumps_typed(checkpoint)
         checkpoint_base64 = base64.b64encode(serialized_bytes).decode("utf-8")
 
+        # Corrected: metadata must remain stringified because of its internal nested maps
         params = {
             "thread_id": thread_id,
             "checkpoint_ns": checkpoint_ns,
@@ -198,8 +193,8 @@ class Neo4jCheckpointSaver(BaseCheckpointSaver[str]):
 
         await self.db_client.execute_query(query, params)
         logger.info(f"Checkpoint Saved Natively: ID={checkpoint_id}")
-        return {"configurable": {"thread_id": thread_id, "checkpoint_ns": checkpoint_ns, "checkpoint_id": checkpoint_id}}
-
+        return {
+            "configurable": {"thread_id": thread_id, "checkpoint_ns": checkpoint_ns, "checkpoint_id": checkpoint_id}}
     def put(
             self,
             config: RunnableConfig,
@@ -263,6 +258,7 @@ class Neo4jCheckpointSaver(BaseCheckpointSaver[str]):
                     "value": str(value)
                 })
 
+        # Corrected: stringify 'writes' because it's a list of sub-dictionaries (maps)
         params = {
             "thread_id": thread_id,
             "checkpoint_ns": checkpoint_ns,

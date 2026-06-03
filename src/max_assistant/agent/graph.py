@@ -15,7 +15,6 @@ chat applications or AI-powered assistants.
 
 import logging
 import json
-from linecache import cache
 from typing import Any, Literal
 import uuid
 
@@ -44,12 +43,11 @@ tokenizer = tiktoken.get_encoding("cl100k_base")
 
 
 def count_tokens(messages: list) -> int:
-    """Helper function to roughly count tokens in a message list."""
     total_tokens = 0
     for m in messages:
-        # Cast to string safely, as tool outputs might be complex objects
         content = str(m.content) if m.content else ""
-        total_tokens += len(tokenizer.encode(content))
+        # Heuristic: ~4 characters per token is highly efficient for pruning calculations
+        total_tokens += len(content) // 4
     return total_tokens
 
 
@@ -58,23 +56,38 @@ def prune_messages(state: GraphState) -> dict[str, Any]:
     if not messages:
         return {}
 
-    # Use LangChain's smart trimmer with the real token counter
     kept_messages = trim_messages(
         messages,
-        max_tokens=128000,  # Your calculated safe limit based on your model
+        max_tokens=128000,
         strategy="last",
-        token_counter=count_tokens,  # Pass the actual token counting function
+        token_counter=count_tokens,
         include_system=True,
-        allow_partial=False,  # Protects the tool calls
+        allow_partial=False,
     )
 
-    # Compare the old list to the kept list to find what got dropped
-    kept_ids = {m.id for m in kept_messages if m.id}
-    messages_to_delete = [m for m in messages if m.id and m.id not in kept_ids]
+    # 1. Gather all valid IDs being kept
+    kept_ids = {m.id for m in kept_messages if m and getattr(m, "id", None) is not None}
 
-    if messages_to_delete:
-        logger.info(f"--- Pruning {len(messages_to_delete)} messages safely ---")
-        return {"messages": [RemoveMessage(id=m.id) for m in messages_to_delete]}
+    # 2. Extract ONLY the raw string IDs that need to be deleted
+    # Explicit type masking prevents list[Any | None] fallback flags
+    # 2. Extract ONLY the raw string IDs that need to be deleted
+    ids_to_delete: list[str] = []
+
+    for m in messages:
+        if m:
+            # Explicitly type hint m_id to guide the static analysis tool
+            m_id: str | None = getattr(m, "id", None)
+
+            # The check now perfectly narrows 'str | None' to a clean 'str'
+            if m_id is not None and m_id not in kept_ids:
+                ids_to_delete.append(m_id)
+
+    # 3. Build the payload. Since ids_to_delete is strictly list[str], warnings disappear.
+    if ids_to_delete:
+        logger.info(f"--- Pruning {len(ids_to_delete)} messages safely ---")
+        return {
+            "messages": [RemoveMessage(id=m_id) for m_id in ids_to_delete]
+        }
 
     return {}
 
@@ -168,26 +181,32 @@ async def create_reasoning_engine(
             return {"messages": [response]}
 
         try:
-            # Check if the *content* is a JSON tool call
-            content_json = json.loads(response.content)
-            if isinstance(content_json, dict) and "name" in content_json:
-                logger.warning("Raw JSON tool call detected. Re-formatting message.")
+            # Ensure content is natively a string before feeding it to json.loads
+            if isinstance(response.content, str):
+                try:
+                    # Check if the *content* is a JSON tool call
+                    content_json = json.loads(response.content)
+                    if isinstance(content_json, dict) and "name" in content_json:
+                        logger.warning("Raw JSON tool call detected. Re-formatting message.")
 
-                # Create a proper AIMessage with a tool_calls attribute
-                tool_call_obj = ToolCall(
-                    name=content_json["name"],
-                    args=content_json.get("parameters", {}),
-                    id=f"call_{uuid.uuid4().hex[:16]}"  # Create a new ID
-                )
+                        # Create a proper AIMessage with a tool_calls attribute
+                        tool_call_obj = ToolCall(
+                            name=content_json["name"],
+                            args=content_json.get("parameters", {}),
+                            id=f"call_{uuid.uuid4().hex[:16]}"  # Create a new ID
+                        )
 
-                # Create a new message that has the 'tool_calls'
-                # attribute that should_continue is looking for.
-                new_response = AIMessage(
-                    content="",  # Content is now empty
-                    tool_calls=[tool_call_obj],
-                    id=response.id
-                )
-                return {"messages": [new_response]}
+                        # Create a new message that has the 'tool_calls'
+                        # attribute that should_continue is looking for.
+                        new_response = AIMessage(
+                            content="",  # Content is now empty
+                            tool_calls=[tool_call_obj],
+                            id=response.id
+                        )
+                        return {"messages": [new_response]}
+                except (json.JSONDecodeError, TypeError):
+                    # It's just a regular text response, not JSON
+                    pass
 
         except (json.JSONDecodeError, TypeError):
             # It's just a regular text response, not JSON

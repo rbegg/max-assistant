@@ -84,28 +84,33 @@ class AppServices:
             logger.critical(f"Failed to initialize application services: {e}", exc_info=True)
             raise
 
-    @staticmethod
-    async def _initialize_clients(llm_ready_event: asyncio.Event) -> Tuple[Neo4jClient, ChatOllama, asyncio.Task]:
+    # FIX: Change from @staticmethod to @classmethod so 'cls' is valid
+    @classmethod
+    async def _initialize_clients(cls, llm_ready_event: asyncio.Event) -> Tuple[
+        Neo4jClient, ChatOllama, asyncio.Task]:
         """Initializes the Neo4j client and the Ollama LLM concurrently."""
         logger.info("Initializing Neo4j client and LLM...")
 
         llm = create_llm_instance(OLLAMA_MODEL_NAME, OLLAMA_BASE_URL, temperature=0)
 
-        # FIX: Return the task instance so a strong reference can be saved
-        preload_task = asyncio.create_task(preload_model_async(llm, ready_event=llm_ready_event))
-        logger.info("LLM warm-up process started in the background.")
-
-        # Await the Neo4j client creation while the LLM warms up in the background
-        db_client = await Neo4jClient.create(NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD)
-
-        if not db_client:
-            raise RuntimeError("Fatal: Failed to initialize Neo4j client.")
-        if not llm:
-            raise RuntimeError("Fatal: Failed to initialize the LLM.")
+        try:
+            # Now 'cls' is perfectly bound and safe to call
+            db_client, preload_task = await asyncio.gather(
+                Neo4jClient.create(NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD),
+                cls._wrap_preload_task(llm, llm_ready_event)
+            )
+        except Exception as e:
+            logger.critical(f"Concurrent bootstrapping failed: {e}", exc_info=True)
+            raise
 
         msg = "* Successfully initialized Neo4j client and LLM instance. *"
         logger.info(f"\n{'*' * len(msg)}\n{msg}\n{'*' * len(msg)}")
         return db_client, llm, preload_task
+
+    @staticmethod
+    async def _wrap_preload_task(llm: ChatOllama, ready_event: asyncio.Event) -> asyncio.Task:
+        """Helper wrapper to return the strong task reference directly out of gather."""
+        return asyncio.create_task(preload_model_async(llm, ready_event=ready_event))
 
     @staticmethod
     def _initialize_tool_registry(db_client: Neo4jClient, llm: ChatOllama) -> ToolRegistry:

@@ -18,14 +18,27 @@ class CachedCheckpointSaver(BaseCheckpointSaver[str]):
         # Cache Key: (thread_id, checkpoint_ns) -> Value: CheckpointTuple
         self._latest_cache: Dict[tuple[str, str], CheckpointTuple] = {}
 
-    def _get_cache_key(self, config: RunnableConfig) -> Optional[tuple[str, str]]:
+    @staticmethod
+    def _get_cache_key(config: RunnableConfig) -> Optional[tuple[str, str]]:
         """Extracts a unique composite cache key from the configuration layer."""
         configurable = config.get("configurable", {})
         thread_id = configurable.get("thread_id")
         checkpoint_ns = configurable.get("checkpoint_ns", "")
         if not thread_id:
             return None
-        return (str(thread_id), str(checkpoint_ns))
+        return str(thread_id), str(checkpoint_ns)
+
+    # --- Safe Attribute Delegation Fallbacks ---
+
+    @property
+    def encoder(self) -> Any:
+        """Delegates encoder lookup safely to the underlying native saver."""
+        return getattr(self.base_saver, "encoder", None)
+
+    @property
+    def db_client(self) -> Any:
+        """Delegates database client access safely to the underlying native saver."""
+        return getattr(self.base_saver, "db_client", None)
 
     # --- Asynchronous Read Paths ---
 
@@ -56,8 +69,11 @@ class CachedCheckpointSaver(BaseCheckpointSaver[str]):
             before: Optional[RunnableConfig] = None,
             limit: Optional[int] = None,
     ) -> AsyncIterator[CheckpointTuple]:
-        # History lists should always bypass the latest-record cache to maintain consistency
-        async for checkpoint in self.base_saver.alist(config, filter=query_filter, before=before, limit=limit):
+        # History lists bypass the latest-record cache.
+        # Fixed: Aligned parameter argument naming contract to avoid unexpected arguments.
+        async for checkpoint in self.base_saver.alist(
+            config, query_filter=query_filter, before=before, limit=limit
+        ):
             yield checkpoint
 
     # --- Asynchronous Write Paths ---
@@ -70,21 +86,19 @@ class CachedCheckpointSaver(BaseCheckpointSaver[str]):
             new_versions: Any = None,
             *args: Any,
             **kwargs: Any,
-    ) -> RunnableConfig:
-        # 1. Commit changes downstream to the persistent Neo4j Database
-        new_config = await self.base_saver.aput(config, checkpoint, metadata, new_versions, *args, **kwargs)
-
-        # 2. Immediately invalidate/update the local memory cache to keep tracking linked
-        cache_key = self._get_cache_key(new_config)
-        if cache_key:
+        ) -> RunnableConfig:
+        # Fix Cache Bottleneck: Update local cache ahead of heavy persistent I/O wait boundaries
+        cache_key = self._get_cache_key(config)
+        if cache_key and not config.get("configurable", {}).get("checkpoint_id"):
             self._latest_cache[cache_key] = CheckpointTuple(
-                config=new_config,
+                config=config,
                 checkpoint=checkpoint,
                 metadata=metadata,
             )
-            logger.debug(f"Cache Warmed: Updated latest state for thread {cache_key[0]}")
+            logger.debug(f"Cache Warmed Pre-emptively: Updated latest state for thread {cache_key[0]}")
 
-        return new_config
+        # Commit changes downstream to the persistent Neo4j Database
+        return await self.base_saver.aput(config, checkpoint, metadata, new_versions, *args, **kwargs)
 
     async def aput_writes(
             self,
@@ -95,10 +109,9 @@ class CachedCheckpointSaver(BaseCheckpointSaver[str]):
             *args: Any,
             **kwargs: Any,
     ) -> None:
-        # Intermediate writes do not alter the root state checkpoints directly; pass through seamlessly
         await self.base_saver.aput_writes(config, writes, task_id, task_path, *args, **kwargs)
 
-    # --- Synchronous Contract Fallbacks (Delegated directly to base class) ---
+    # --- Synchronous Contract Fallbacks ---
 
     def get_tuple(self, config: RunnableConfig) -> Optional[CheckpointTuple]:
         checkpoint_id = config.get("configurable", {}).get("checkpoint_id")
@@ -122,7 +135,8 @@ class CachedCheckpointSaver(BaseCheckpointSaver[str]):
             before: Optional[RunnableConfig] = None,
             limit: Optional[int] = None,
     ) -> Iterator[CheckpointTuple]:
-        return self.base_saver.list(config, filter=query_filter, before=before, limit=limit)
+        # Fixed: Aligned query parameter naming tokens
+        return self.base_saver.list(config, query_filter=query_filter, before=before, limit=limit)
 
     def put(
             self,
