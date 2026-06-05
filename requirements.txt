@@ -9,6 +9,7 @@ httpx
 isort
 langchain-core
 langchain-ollama
+langchain_neo4j
 langgraph
 neo4j
 nest_asyncio

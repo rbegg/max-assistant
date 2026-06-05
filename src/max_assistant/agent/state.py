@@ -21,7 +21,7 @@ class GraphState(TypedDict):
         voice: The current TTS voice configuration.
         external_event: Optional payload containing background timer/reminder data.
     """
-    transcribed_text: str
+    transcribed_text: NotRequired[str]
     userinfo: dict
     thread_id: str
     messages: Annotated[list[BaseMessage], operator.add]

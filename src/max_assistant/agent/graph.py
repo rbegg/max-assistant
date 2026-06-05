@@ -25,14 +25,14 @@ from langchain_core.messages import HumanMessage, ToolMessage, AIMessage, ToolCa
 from langgraph.graph import StateGraph
 from langgraph.prebuilt import ToolNode
 from langchain_ollama import ChatOllama
+from langchain_neo4j.checkpoint.aio import AsyncNeo4jSaver
 
 from max_assistant.agent.prompts import ChatPromptTemplate, MessagesPlaceholder, senior_assistant_prompt
 from max_assistant.agent.state import GraphState
 from max_assistant.tools.registry import ToolRegistry
 from max_assistant.tools.time_tools import get_current_datetime
 from max_assistant.utils.datetime_utils import current_datetime
-from max_assistant.agent.checkpointer import Neo4jCheckpointSaver
-from max_assistant.agent.cached_checkpointer import CachedCheckpointSaver
+
 
 logger = logging.getLogger(__name__)
 
@@ -49,47 +49,6 @@ def count_tokens(messages: list) -> int:
         # Heuristic: ~4 characters per token is highly efficient for pruning calculations
         total_tokens += len(content) // 4
     return total_tokens
-
-
-def prune_messages(state: GraphState) -> dict[str, Any]:
-    messages = state.get("messages", [])
-    if not messages:
-        return {}
-
-    kept_messages = trim_messages(
-        messages,
-        max_tokens=128000,
-        strategy="last",
-        token_counter=count_tokens,
-        include_system=True,
-        allow_partial=False,
-    )
-
-    # 1. Gather all valid IDs being kept
-    kept_ids = {m.id for m in kept_messages if m and getattr(m, "id", None) is not None}
-
-    # 2. Extract ONLY the raw string IDs that need to be deleted
-    # Explicit type masking prevents list[Any | None] fallback flags
-    # 2. Extract ONLY the raw string IDs that need to be deleted
-    ids_to_delete: list[str] = []
-
-    for m in messages:
-        if m:
-            # Explicitly type hint m_id to guide the static analysis tool
-            m_id: str | None = getattr(m, "id", None)
-
-            # The check now perfectly narrows 'str | None' to a clean 'str'
-            if m_id is not None and m_id not in kept_ids:
-                ids_to_delete.append(m_id)
-
-    # 3. Build the payload. Since ids_to_delete is strictly list[str], warnings disappear.
-    if ids_to_delete:
-        logger.info(f"--- Pruning {len(ids_to_delete)} messages safely ---")
-        return {
-            "messages": [RemoveMessage(id=m_id) for m_id in ids_to_delete]
-        }
-
-    return {}
 
 
 # --- Build the Graph ---
@@ -136,9 +95,14 @@ async def create_reasoning_engine(
             }
 
         # --- Fallback: Normal conversational turn processing ---
-        last_message = state["messages"][-1] if state["messages"] else None
-        if not isinstance(last_message, ToolMessage):
-            return {"messages": [HumanMessage(content=state["transcribed_text"])]}
+        text = state.get("transcribed_text", "").strip()
+        if text:
+            # Returning this appends the new message to history,
+            # and resets transcribed_text to "" so loops don't re-trigger it.
+            return {
+                "messages": [HumanMessage(content=text)],
+                "transcribed_text": ""
+            }
         return {}
 
     async def call_model(state: GraphState)-> dict[str, Any]:
@@ -147,6 +111,16 @@ async def create_reasoning_engine(
         in the message history.
         """
         logger.info("Calling model with current history.")
+
+        current_messages = state.get("messages", [])
+        trimmed_messages = trim_messages(
+            current_messages,
+            max_tokens=128000,
+            strategy="last",
+            token_counter=count_tokens,
+            include_system=True,
+            allow_partial=False,
+        )
 
         if state.get("is_background"):
             # This task-centric prompt completely eliminates conversational chitchat and tool loops
@@ -170,7 +144,7 @@ async def create_reasoning_engine(
         response = await chain.ainvoke({
             "user_info": state["userinfo"],
             "current_datetime": current_datetime(),
-            "messages": state["messages"],
+            "messages": trimmed_messages,
         })
 
         logger.info(f"Model produced: {repr(response.content)}")
@@ -231,13 +205,11 @@ async def create_reasoning_engine(
     workflow = StateGraph(GraphState)
 
     workflow.add_node("prepare_input", prepare_input)
-    workflow.add_node("prune", prune_messages)
     workflow.add_node("agent", call_model)
     workflow.add_node("execute_tools", ToolNode(tools))
 
     # 4. Add edges
-    workflow.set_entry_point("prune")
-    workflow.add_edge("prune", "prepare_input")
+    workflow.set_entry_point("prepare_input")
     workflow.add_edge("prepare_input", "agent")
     workflow.add_conditional_edges(
         "agent",
@@ -246,12 +218,11 @@ async def create_reasoning_engine(
     )
     workflow.add_edge("execute_tools", "agent")
 
-    # Instantiate our custom Neo4j Checkpointer
-    native_neo4j_checkpointer = Neo4jCheckpointSaver(tool_registry.db_client)
-
-    cached_checkpointer = CachedCheckpointSaver(native_neo4j_checkpointer)
+    # Instantiate Neo4j Checkpointer
+    checkpointer = AsyncNeo4jSaver(tool_registry.db_client.driver)
+    await checkpointer.setup()
 
     # 5. Compile and return
-    compiled_graph = workflow.compile(checkpointer=cached_checkpointer)
+    compiled_graph = workflow.compile(checkpointer=checkpointer)
 
     return compiled_graph
