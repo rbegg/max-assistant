@@ -103,8 +103,6 @@ class AppServices:
             logger.critical(f"Concurrent bootstrapping failed: {e}", exc_info=True)
             raise
 
-        msg = "* Successfully initialized Neo4j client and LLM instance. *"
-        logger.info(f"\n{'*' * len(msg)}\n{msg}\n{'*' * len(msg)}")
         return db_client, llm, preload_task
 
     @staticmethod
