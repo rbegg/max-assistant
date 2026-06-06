@@ -88,8 +88,8 @@ class PersonTools(BaseToolProvider):
 
         # First, check for close family relationships
         family_query = """
-            MATCH (u:User {id: $user_id}), (p {id: $person_id})
-            MATCH path = shortestPath((u)-[r:MARRIED_TO|PARENT_OF|PARTNER_OF*1..2]-(p))
+            MATCH path = shortestPath((u:User {id: $user_id})-[r:MARRIED_TO|PARENT_OF|PARTNER_OF*1..2]-(p {id: $person_id}))
+            WHERE u <> p
             RETURN [r IN relationships(path) | type(r)] AS rel_types, p.gender as gender
             ORDER BY length(path) ASC
             LIMIT 1
@@ -102,8 +102,8 @@ class PersonTools(BaseToolProvider):
 
             # If no family path, check for other relationships
             other_query = """
-                MATCH (u:User {id: $user_id}), (p {id: $person_id})
-                MATCH path = shortestPath((u)-[r:FRIEND_OF|SUPPORTED_BY|LIVES_WITH*1..3]-(p))
+                MATCH path = shortestPath((u:User {id: $user_id})-[*1..3]-(p {id: $person_id}))
+                WHERE u <> p
                 RETURN [r IN relationships(path) | type(r)] AS rel_types, p.gender as gender
                 ORDER BY length(path) ASC
                 LIMIT 1
