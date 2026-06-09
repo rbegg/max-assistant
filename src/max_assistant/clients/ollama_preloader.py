@@ -8,6 +8,8 @@ from langchain_ollama import ChatOllama
 from langchain_core.runnables import RunnableConfig
 from langchain_core.output_parsers import StrOutputParser
 
+from max_assistant.utils.log_utils import log_banner
+
 logger = logging.getLogger(__name__)
 
 
@@ -63,9 +65,10 @@ async def preload_model_async(
                 end_time = time.monotonic()
                 duration = end_time - start_time
 
-                logger.info(f"\n✅ Async warm-up complete! Model '{llm.model}' is ready.")
-                logger.info(f"   Warm-up duration: {duration:.2f} seconds.")
-                logger.info("-" * 50)
+                logger.info( log_banner(
+                    [f"✅ Async warm-up complete! Model '{llm.model}' is ready.",
+                     f"  Warm-up duration: {duration:.2f} seconds.           ",
+                    ]) )
                 return  # Warm-up successful
 
             except httpx.ConnectError:

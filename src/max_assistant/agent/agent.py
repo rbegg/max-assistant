@@ -1,140 +1,95 @@
-# Copyright (c) 2025, Robert Begg
-# Licensed under the MIT License. See LICENSE for more details.
-"""
-This module defines the Agent class, which encapsulates the reasoning engine and
-manages conversation state. It provides a clean interface for text-based interaction.
-"""
+# max_assistant/agent/agent.py
 
 import logging
 from uuid import uuid4
 from typing import Dict, Any, Optional
-
-from langchain_core.messages import BaseMessage
 from max_assistant.config import DEFAULT_USERNAME, TTS_VOICE
-from max_assistant.agent.state import GraphState
 
 logger = logging.getLogger(__name__)
 
 
 class Agent:
-    """Encapsulates the reasoning engine and conversation state management."""
+    """Encapsulates the reasoning engine and handles stateless text turn delivery."""
 
-    # FIX 1: Explicitly specify Optional mapping for incoming initialization dict parameters
     def __init__(self, reasoning_engine: Any, initial_user_info: Optional[Dict[str, Any]] = None) -> None:
         self.reasoning_engine = reasoning_engine
-
-        # Safely assign default dictionaries without mutating optional reference frames
         runtime_user_info = initial_user_info if initial_user_info is not None else {}
 
-        self.conversation_state: GraphState = {
-            "messages": [],
+        self.conversation_state: Dict[str, Any] = {
             "userinfo": runtime_user_info,
-            "thread_id": str(uuid4()),
             "transcribed_text": "",
             "voice": TTS_VOICE,
             "external_event": {},
             "is_background": False,
         }
-        self.connection_manager = None  # Bound dynamically on client socket connection
 
+        # Long-running context tracker block. Standard checkpointers resolve full history
+        # using only the thread_id property via aget_tuple loop calls!
+        self.config: Dict[str, Any] = {
+            "configurable": {
+                "thread_id": str(uuid4()),
+                "checkpoint_ns": ""
+            }
+        }
+        self.connection_manager = None
         user_name = runtime_user_info.get("user", {}).get("firstName", DEFAULT_USERNAME)
-        logger.info(f"Agent initialized for user: {user_name}")
+        logger.info(
+            f"Agent initialized for user: {user_name} with Thread ID: {self.config['configurable']['thread_id']}")
 
     def set_thread_id(self, thread_id: str) -> None:
-        self.conversation_state["thread_id"] = thread_id
-        logger.info(f"Thread ID set to {thread_id}")
+        self.config["configurable"]["thread_id"] = thread_id
 
     def set_voice(self, voice: str) -> None:
-        """Sets the TTS voice for the conversation."""
         self.conversation_state["voice"] = voice
 
     def get_voice(self) -> str:
-        """Gets the current TTS voice."""
         return self.conversation_state.get("voice", TTS_VOICE)
 
     def set_user_info(self, user_info: Dict[str, Any]) -> None:
         self.conversation_state["userinfo"] = user_info
-        user_name = user_info.get("user", {}).get("firstName", DEFAULT_USERNAME)
-        logger.info(f"Agent user updated to: {user_name}")
 
     async def ainvoke(self, text_input: str) -> str:
-        """Invokes the agent with text input and returns the text response."""
-        # FIX 2: To appease missing key constraints while keeping LangGraph sequence lineages linked,
-        # initialize the missing required structure key explicitly as an empty list container.
-        inputs: GraphState = {
-            "messages": [],
+        inputs = {
             "transcribed_text": text_input,
             "userinfo": self.conversation_state["userinfo"],
-            "thread_id": self.conversation_state["thread_id"],
             "voice": self.conversation_state["voice"],
             "external_event": {},
             "is_background": False
         }
-
-        config = {
-            "configurable": {
-                "thread_id": self.conversation_state["thread_id"],
-                "checkpoint_ns": ""
-            }
-        }
-
-        logger.info(f"Calling Reasoning engine with: {text_input}")
-        return await self._execute_graph_turn(inputs, config)
+        return await self._execute_graph_turn(inputs, self.config)
 
     async def handle_push_event(self, reminder_payload: dict) -> str:
-        """
-        Invoked by the background reminder poller when a timer expires.
-        Injects the reminder payload into the graph state.
-        """
-        inputs: GraphState = {
-            "messages": [],
+        inputs = {
             "transcribed_text": "",
             "userinfo": self.conversation_state["userinfo"],
-            "thread_id": self.conversation_state["thread_id"],
             "voice": self.conversation_state["voice"],
             "external_event": reminder_payload,
             "is_background": True,
         }
+        return await self._execute_graph_turn(inputs, self.config)
 
-        config = {
-            "configurable": {
-                "thread_id": self.conversation_state["thread_id"],
-                "checkpoint_ns": ""
-            }
-        }
-
-        logger.info(f"Poller event triggered for thread {inputs.get('thread_id')}")
-        return await self._execute_graph_turn(inputs, config)
-
-    async def _execute_graph_turn(self, inputs: GraphState, config: dict[str, Any]) -> str:
-        """Internal helper to execute LangGraph and sync state cleanly."""
+    async def _execute_graph_turn(self, inputs: dict, config: dict[str, Any]) -> str:
+        """Internal helper to execute LangGraph and extract final text responses."""
         try:
-            # Execute the graph turn smoothly. LangGraph handles loading the
-            # historical checkpoint state internally via the provided config.
+            # LangGraph handles parent relationship drawings natively across turns now
             final_state = await self.reasoning_engine.ainvoke(inputs, config=config)
 
             if isinstance(final_state, dict):
-                # Update the flat configuration parameters and tracking states
-                self.conversation_state.update(final_state)
+                # Update visual properties back to application session stores
+                self.conversation_state.update({
+                    k: v for k, v in final_state.items() if k != "messages"
+                })
 
-                # Extract and validate messages directly from the graph's output state.
-                # LangGraph's state reducer has already cleanly handled the historical accumulation.
+                # Grab the latest unified text message array update response
                 new_messages = final_state.get("messages", [])
-                self.conversation_state["messages"] = [
-                    msg for msg in new_messages if isinstance(msg, BaseMessage)
-                ]
+                if new_messages:
+                    last_message = new_messages[-1]
+                    if isinstance(last_message.content, str):
+                        return last_message.content
+                return ""
             else:
                 logger.error(f"Engine returned invalid state type: {type(final_state)}")
                 return "" if inputs.get("is_background") else "I encountered an internal logic error."
-
-            llm_response = ""
-            current_messages = self.conversation_state.get("messages")
-            if current_messages:
-                last_message = current_messages[-1]
-                if isinstance(last_message.content, str):
-                    llm_response = last_message.content
-
-            return llm_response
 
         except Exception as e:
             logger.error(f"Reasoning engine crashed during execution: {e}", exc_info=True)

@@ -12,13 +12,13 @@ logger = logging.getLogger(__name__)
 
 
 class TTSClient:
-    """Manages a persistent connection to a Wyoming TTS service."""
+    """Manages a persistent connection to a Wyoming TTS service with non-blocking concurrency."""
 
     def __init__(self, uri: str = "tcp://tts:10200", retry_delay: int = 5):
         self.uri = uri
         self.retry_delay = retry_delay
         self._client: AsyncClient | None = None
-        self._lock = asyncio.Lock()
+        self._lock = asyncio.Lock()  # Shields connection state and socket writes exclusively
 
     async def connect(self):
         """Initiates connection to the TTS service."""
@@ -31,7 +31,6 @@ class TTSClient:
             return
 
         logger.info(f"Connecting to TTS service at {self.uri}")
-        # This loop is for the initial connection.
         while True:
             try:
                 client = AsyncClient.from_uri(self.uri)
@@ -40,22 +39,23 @@ class TTSClient:
                 logger.info("Connection to TTS established.")
                 return
             except ConnectionRefusedError:
-                logging.warning(f"Connection to {self.uri} refused. Retrying in {self.retry_delay} seconds...")
+                logger.warning(f"Connection to {self.uri} refused. Retrying in {self.retry_delay} seconds...")
                 await asyncio.sleep(self.retry_delay)
             except Exception as e:
-                logging.error(f"An unexpected error occurred during TTS connection: {e}. Retrying in {self.retry_delay} seconds...")
+                logger.error(f"An unexpected error occurred during TTS connection: {e}. Retrying...")
                 await asyncio.sleep(self.retry_delay)
 
     async def synthesize_speech(self, text: str, voice: str) -> bytes | None:
         """
-        Sends text for synthesis and returns the received audio as bytes.
-        Handles connection logic internally.
+        Sends text for synthesis and returns the received audio as a complete WAV byte string.
+        Maintains the original method signature and return format for client compatibility.
         """
+        # Step 1: Secure socket write payload inside a tight lock scope
         async with self._lock:
             try:
                 await self._ensure_connected()
                 if not self._client:
-                    logging.error("TTS synthesis failed, client not connected.")
+                    logger.error("TTS synthesis failed, client not connected.")
                     return None
 
                 synthesize_event = Synthesize(
@@ -64,49 +64,57 @@ class TTSClient:
                 )
                 await self._client.write_event(synthesize_event.event())
                 logger.info(f"Sent synthesize request with voice: {voice} text: '{text}'")
-
-                wav_buffer = BytesIO()
-                wav_writer = None
-                audio_received = False
-
-                while True:
-                    event = await self._client.read_event()
-                    if event is None:
-                        logger.warning("TTS Connection closed by server. Will reconnect on next call.")
-                        await self.close()
-                        return None  # Current synthesis fails
-
-                    if AudioStart.is_type(event.type):
-                        start_event = AudioStart.from_event(event)
-                        wav_writer = wave.open(wav_buffer, "wb")
-                        wav_writer.setnchannels(start_event.channels)
-                        wav_writer.setsampwidth(start_event.width)
-                        wav_writer.setframerate(start_event.rate)
-                        logger.info(
-                            f"Audio stream started with params: rate={start_event.rate}, "
-                            f"width={start_event.width}, channels={start_event.channels}"
-                        )
-                    elif AudioChunk.is_type(event.type):
-                        chunk_event = AudioChunk.from_event(event)
-                        if wav_writer:
-                            wav_writer.writeframes(chunk_event.audio)
-                            audio_received = True
-                    elif AudioStop.is_type(event.type):
-                        logger.info("Audio stream finished.")
-                        break
-                    elif Event.is_type(event.type, "error"): # noinspection PyUnresolvedReferences
-                        logging.error(f"Received error from server: {event.data.get('text')}")
-                        break
-
-                if wav_writer:
-                    wav_writer.close()
-
-                return wav_buffer.getvalue() if audio_received else None
-
             except Exception as e:
-                logging.error(f"An unexpected error occurred in TTSClient: {e}", exc_info=True)
+                logger.error(f"Failed to transmit TTS request payload: {e}")
                 await self.close()
                 return None
+
+        # Step 2: Read loop runs OUTSIDE the lock so secondary requests aren't blocked
+        try:
+            wav_buffer = BytesIO()
+            wav_writer = None
+            audio_received = False
+
+            while True:
+                event = await self._client.read_event()
+                if event is None:
+                    logger.warning("TTS Connection closed by server. Will reconnect on next call.")
+                    await self.close()
+                    return None
+
+                if AudioStart.is_type(event.type):
+                    start_event = AudioStart.from_event(event)
+                    wav_writer = wave.open(wav_buffer, "wb")
+                    wav_writer.setnchannels(start_event.channels)
+                    wav_writer.setsampwidth(start_event.width)
+                    wav_writer.setframerate(start_event.rate)
+                    logger.debug(
+                        f"Audio stream started: rate={start_event.rate}, "
+                        f"width={start_event.width}, channels={start_event.channels}"
+                    )
+                elif AudioChunk.is_type(event.type):
+                    chunk_event = AudioChunk.from_event(event)
+                    if wav_writer and chunk_event.audio:
+                        wav_writer.writeframes(chunk_event.audio)
+                        audio_received = True
+
+                elif AudioStop.is_type(event.type):
+                    logger.info("Audio stream finished.")
+                    break
+
+                elif Event.is_type(event.type, "error"):
+                    logger.error(f"Received error from server: {event.data.get('text')}")
+                    break
+
+            if wav_writer:
+                wav_writer.close()
+
+            return wav_buffer.getvalue() if audio_received else None
+
+        except Exception as e:
+            logger.error(f"An unexpected error occurred in TTSClient read loop: {e}", exc_info=True)
+            await self.close()
+            return None
 
     async def close(self):
         """Closes the connection to the TTS service."""
@@ -114,7 +122,7 @@ class TTSClient:
             try:
                 await self._client.disconnect()
             except Exception as e:
-                logging.warning(f"Error while disconnecting from TTS: {e}")
+                logger.warning(f"Error while disconnecting from TTS: {e}")
             finally:
                 self._client = None
                 logger.info("TTS connection closed.")

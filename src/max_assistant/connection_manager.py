@@ -39,6 +39,7 @@ class ConnectionManager:
         self._external_event_queue = Queue()
 
         self._shutdown_event = asyncio.Event()
+        self._authenticated = asyncio.Event()
         self._tasks: List[asyncio.Task] = []
         self._registered_user_id = None  # Track state for deterministic cleanup
 
@@ -77,6 +78,18 @@ class ConnectionManager:
             await self.tts_client.close()
             logger.info("Connection handler for a client finished.")
 
+    async def _enforce_auth_timeout(self):
+        """Closes the connection if the user fails to authenticate within 15 seconds."""
+        try:
+            await asyncio.wait_for(self._authenticated.wait(), timeout=15.0)
+        except asyncio.TimeoutError:
+            if self.agent is None:
+                logger.warning("Connection timed out waiting for authentication credentials. Closing.")
+                error_payload = {"data": "Authentication timeout.", "source": "system"}
+                await self.ws.send_text(json.dumps(error_payload))
+                await self.ws.close(code=1008)
+                self._shutdown_event.set()
+
     async def submit_external_event(self, payload: dict):
         """Public API for pushing external polling notices into this connection session."""
         await self._external_event_queue.put(payload)
@@ -92,6 +105,7 @@ class ConnectionManager:
             asyncio.create_task(self._agent_loop()),
             asyncio.create_task(self._text_input_handler_loop()),
             asyncio.create_task(self._external_event_loop()),
+            asyncio.create_task(self._enforce_auth_timeout()),
         ]
         self._tasks.extend(processing_tasks)
 
@@ -183,6 +197,7 @@ class ConnectionManager:
 
                     # Core Session Initialization
                     self.agent = Agent(self.app_services.reasoning_engine, user_data)
+                    self._authenticated.set()
                     self.agent.connection_manager = self
                     self.agent.set_user_info(user_data)
 

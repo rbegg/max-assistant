@@ -15,7 +15,6 @@ chat applications or AI-powered assistants.
 
 import logging
 import json
-from linecache import cache
 from typing import Any, Literal
 import uuid
 
@@ -26,14 +25,14 @@ from langchain_core.messages import HumanMessage, ToolMessage, AIMessage, ToolCa
 from langgraph.graph import StateGraph
 from langgraph.prebuilt import ToolNode
 from langchain_ollama import ChatOllama
+from langchain_neo4j.checkpoint.aio import AsyncNeo4jSaver
 
 from max_assistant.agent.prompts import ChatPromptTemplate, MessagesPlaceholder, senior_assistant_prompt
 from max_assistant.agent.state import GraphState
 from max_assistant.tools.registry import ToolRegistry
 from max_assistant.tools.time_tools import get_current_datetime
 from max_assistant.utils.datetime_utils import current_datetime
-from max_assistant.agent.checkpointer import Neo4jCheckpointSaver
-from max_assistant.agent.cached_checkpointer import CachedCheckpointSaver
+
 
 logger = logging.getLogger(__name__)
 
@@ -44,39 +43,12 @@ tokenizer = tiktoken.get_encoding("cl100k_base")
 
 
 def count_tokens(messages: list) -> int:
-    """Helper function to roughly count tokens in a message list."""
     total_tokens = 0
     for m in messages:
-        # Cast to string safely, as tool outputs might be complex objects
         content = str(m.content) if m.content else ""
-        total_tokens += len(tokenizer.encode(content))
+        # Heuristic: ~4 characters per token is highly efficient for pruning calculations
+        total_tokens += len(content) // 4
     return total_tokens
-
-
-def prune_messages(state: GraphState) -> dict[str, Any]:
-    messages = state.get("messages", [])
-    if not messages:
-        return {}
-
-    # Use LangChain's smart trimmer with the real token counter
-    kept_messages = trim_messages(
-        messages,
-        max_tokens=128000,  # Your calculated safe limit based on your model
-        strategy="last",
-        token_counter=count_tokens,  # Pass the actual token counting function
-        include_system=True,
-        allow_partial=False,  # Protects the tool calls
-    )
-
-    # Compare the old list to the kept list to find what got dropped
-    kept_ids = {m.id for m in kept_messages if m.id}
-    messages_to_delete = [m for m in messages if m.id and m.id not in kept_ids]
-
-    if messages_to_delete:
-        logger.info(f"--- Pruning {len(messages_to_delete)} messages safely ---")
-        return {"messages": [RemoveMessage(id=m.id) for m in messages_to_delete]}
-
-    return {}
 
 
 # --- Build the Graph ---
@@ -123,9 +95,14 @@ async def create_reasoning_engine(
             }
 
         # --- Fallback: Normal conversational turn processing ---
-        last_message = state["messages"][-1] if state["messages"] else None
-        if not isinstance(last_message, ToolMessage):
-            return {"messages": [HumanMessage(content=state["transcribed_text"])]}
+        text = state.get("transcribed_text", "").strip()
+        if text:
+            # Returning this appends the new message to history,
+            # and resets transcribed_text to "" so loops don't re-trigger it.
+            return {
+                "messages": [HumanMessage(content=text)],
+                "transcribed_text": ""
+            }
         return {}
 
     async def call_model(state: GraphState)-> dict[str, Any]:
@@ -134,6 +111,16 @@ async def create_reasoning_engine(
         in the message history.
         """
         logger.info("Calling model with current history.")
+
+        current_messages = state.get("messages", [])
+        trimmed_messages = trim_messages(
+            current_messages,
+            max_tokens=128000,
+            strategy="last",
+            token_counter=count_tokens,
+            include_system=True,
+            allow_partial=False,
+        )
 
         if state.get("is_background"):
             # This task-centric prompt completely eliminates conversational chitchat and tool loops
@@ -157,7 +144,7 @@ async def create_reasoning_engine(
         response = await chain.ainvoke({
             "user_info": state["userinfo"],
             "current_datetime": current_datetime(),
-            "messages": state["messages"],
+            "messages": trimmed_messages,
         })
 
         logger.info(f"Model produced: {repr(response.content)}")
@@ -168,26 +155,32 @@ async def create_reasoning_engine(
             return {"messages": [response]}
 
         try:
-            # Check if the *content* is a JSON tool call
-            content_json = json.loads(response.content)
-            if isinstance(content_json, dict) and "name" in content_json:
-                logger.warning("Raw JSON tool call detected. Re-formatting message.")
+            # Ensure content is natively a string before feeding it to json.loads
+            if isinstance(response.content, str):
+                try:
+                    # Check if the *content* is a JSON tool call
+                    content_json = json.loads(response.content)
+                    if isinstance(content_json, dict) and "name" in content_json:
+                        logger.warning("Raw JSON tool call detected. Re-formatting message.")
 
-                # Create a proper AIMessage with a tool_calls attribute
-                tool_call_obj = ToolCall(
-                    name=content_json["name"],
-                    args=content_json.get("parameters", {}),
-                    id=f"call_{uuid.uuid4().hex[:16]}"  # Create a new ID
-                )
+                        # Create a proper AIMessage with a tool_calls attribute
+                        tool_call_obj = ToolCall(
+                            name=content_json["name"],
+                            args=content_json.get("parameters", {}),
+                            id=f"call_{uuid.uuid4().hex[:16]}"  # Create a new ID
+                        )
 
-                # Create a new message that has the 'tool_calls'
-                # attribute that should_continue is looking for.
-                new_response = AIMessage(
-                    content="",  # Content is now empty
-                    tool_calls=[tool_call_obj],
-                    id=response.id
-                )
-                return {"messages": [new_response]}
+                        # Create a new message that has the 'tool_calls'
+                        # attribute that should_continue is looking for.
+                        new_response = AIMessage(
+                            content="",  # Content is now empty
+                            tool_calls=[tool_call_obj],
+                            id=response.id
+                        )
+                        return {"messages": [new_response]}
+                except (json.JSONDecodeError, TypeError):
+                    # It's just a regular text response, not JSON
+                    pass
 
         except (json.JSONDecodeError, TypeError):
             # It's just a regular text response, not JSON
@@ -212,13 +205,11 @@ async def create_reasoning_engine(
     workflow = StateGraph(GraphState)
 
     workflow.add_node("prepare_input", prepare_input)
-    workflow.add_node("prune", prune_messages)
     workflow.add_node("agent", call_model)
     workflow.add_node("execute_tools", ToolNode(tools))
 
     # 4. Add edges
-    workflow.set_entry_point("prune")
-    workflow.add_edge("prune", "prepare_input")
+    workflow.set_entry_point("prepare_input")
     workflow.add_edge("prepare_input", "agent")
     workflow.add_conditional_edges(
         "agent",
@@ -227,12 +218,11 @@ async def create_reasoning_engine(
     )
     workflow.add_edge("execute_tools", "agent")
 
-    # Instantiate our custom Neo4j Checkpointer
-    native_neo4j_checkpointer = Neo4jCheckpointSaver(tool_registry.db_client)
-
-    cached_checkpointer = CachedCheckpointSaver(native_neo4j_checkpointer)
+    # Instantiate Neo4j Checkpointer
+    checkpointer = AsyncNeo4jSaver(tool_registry.db_client.driver)
+    await checkpointer.setup()
 
     # 5. Compile and return
-    compiled_graph = workflow.compile(checkpointer=cached_checkpointer)
+    compiled_graph = workflow.compile(checkpointer=checkpointer)
 
     return compiled_graph
