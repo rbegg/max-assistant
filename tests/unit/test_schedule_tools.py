@@ -7,7 +7,7 @@ from max_assistant.tools.schedule_tools import ScheduleTools
 
 
 @pytest.mark.asyncio
-async def test_get_appointments_for_date_success():
+async def test_get_appointments_for_date_success(sample_user_info):
     db_client = MagicMock()
     db_client.execute_query = AsyncMock(
         return_value={
@@ -18,7 +18,7 @@ async def test_get_appointments_for_date_success():
     )
 
     tools = ScheduleTools(db_client=db_client, llm=MagicMock())
-    result = await tools.get_appointments_for_date("2025-01-01")
+    result = await tools.get_appointments_for_date("2025-01-01", sample_user_info)
 
     parsed = json.loads(result)
     assert parsed[0]["id"] == "1"
@@ -26,7 +26,7 @@ async def test_get_appointments_for_date_success():
 
 
 @pytest.mark.asyncio
-async def test_get_routines_for_date_success():
+async def test_get_routines_for_date_success(sample_user_info):
     db_client = MagicMock()
     db_client.execute_query = AsyncMock(
         return_value={
@@ -46,7 +46,7 @@ async def test_get_routines_for_date_success():
     )
 
     tools = ScheduleTools(db_client=db_client, llm=MagicMock())
-    result = await tools.get_routines_for_date("2025-01-01")
+    result = await tools.get_routines_for_date("2025-01-01", sample_user_info)
 
     parsed = json.loads(result)
     assert parsed[0]["id"] == "2"
@@ -54,7 +54,7 @@ async def test_get_routines_for_date_success():
 
 
 @pytest.mark.asyncio
-async def test_get_full_schedule_combines_and_sorts_items():
+async def test_get_full_schedule_combines_and_sorts_items(sample_user_info):
     tools = ScheduleTools(db_client=MagicMock(), llm=MagicMock())
     tools.get_appointments_for_date = AsyncMock(
         return_value=json.dumps(
@@ -72,19 +72,19 @@ async def test_get_full_schedule_combines_and_sorts_items():
         )
     )
 
-    result = await tools.get_full_schedule("2025-01-01")
+    result = await tools.get_full_schedule("2025-01-01", sample_user_info)
     parsed = json.loads(result)
 
     assert [item["title"] for item in parsed] == ["Call", "Breakfast", "Meeting"]
 
 
 @pytest.mark.asyncio
-async def test_create_appointment_returns_db_result():
+async def test_create_appointment_returns_db_result(sample_user_info):
     db_client = MagicMock()
     db_client.execute_query = AsyncMock(return_value={"data": [{"new_appointment_id": "abc"}]})
 
     tools = ScheduleTools(db_client=db_client, llm=MagicMock())
-    result = await tools.create_appointment("Visit", "2025-01-01", "details", 30)
+    result = await tools.create_appointment("Visit", "10:00", "2025-01-01", "details", 30, sample_user_info)
 
     parsed = json.loads(result)
     assert parsed["data"][0]["new_appointment_id"] == "abc"
