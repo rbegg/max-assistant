@@ -4,16 +4,14 @@ import json
 import base64
 import binascii
 from datetime import datetime
-from neo4j import GraphDatabase
 
-# Import official class components and serialization engines natively
-from langchain_neo4j import Neo4jSaver
+from neo4j import GraphDatabase
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 
-# Configuration: Reads your environment variables with default local fallbacks
-NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
-NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
-NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "password")
+# Local tools require explict load loading of a .env.local file
+from max_assistant.scripts.local_config import init_environment
+init_environment(required=True)
+from max_assistant.config import NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD
 
 
 def format_timestamp(version_str):
@@ -91,7 +89,7 @@ def get_threads_timeline():
     threads_list = []
     seen = set()
     try:
-        with GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD)) as driver:
+        with GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USERNAME, NEO4J_PASSWORD)) as driver:
             with driver.session() as session:
                 result = session.run(query)
                 for record in result:
@@ -133,7 +131,7 @@ def dump_thread_with_official_api(target_thread_id):
         serializer = JsonPlusSerializer()
         counter = 0
 
-        with GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD)) as driver:
+        with GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USERNAME, NEO4J_PASSWORD)) as driver:
             with driver.session() as session:
                 result = session.run(query, thread_id=target_thread_id)
 

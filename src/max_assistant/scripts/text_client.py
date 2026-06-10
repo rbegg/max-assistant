@@ -9,21 +9,18 @@ import datetime
 import argparse
 import os
 import sys
-from pathlib import Path
 
-# Load environment variables robustly using file-relative paths
-from dotenv import load_dotenv
-
-SCRIPT_DIR = Path(__file__).parent.resolve()
-local_env_file = SCRIPT_DIR / '../.env.local'
-if not load_dotenv(local_env_file):
-    print(f"Failed to load environment variables from {local_env_file}.")
-    exit(1)
-
+from max_assistant.scripts.local_config import init_environment
+init_environment(required=True)
 from max_assistant.config import LOG_LEVEL, DEFAULT_USERNAME
+
 from max_assistant.app_services import AppServices
 from max_assistant.agent.agent import Agent
 from max_assistant.tools import PersonTools
+
+
+
+
 
 
 class AsyncConsoleReader:
