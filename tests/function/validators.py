@@ -68,9 +68,9 @@ def assert_semantic_criteria(criteria: List[str]):
             model=OLLAMA_MODEL_NAME,
             system=system_prompt,
             prompt=user_prompt,
+            keep_alive=-1,
             options={
                 "temperature": 0.0,
-                "keep_alive": -1
             }
         )
         raw_output = response["response"].strip()
@@ -88,3 +88,52 @@ def assert_semantic_criteria(criteria: List[str]):
         )
 
     return validator
+
+
+# Add this code to the bottom of tests/function/validators.py
+
+# A translation mapping to bridge flat YAML declarations directly to Python logic
+VALIDATOR_REGISTRY = {
+    "substring_present": assert_substring_present,
+    "substrings_present_all": lambda substrings: assert_substrings_present(substrings, match_all=True),
+    "substrings_present_any": lambda substrings: assert_substrings_present(substrings, match_all=False),
+    "semantic_criteria": assert_semantic_criteria,
+}
+
+
+def build_steps_from_yaml(yaml_steps: list) -> list:
+    """
+    Transforms streamlined key-value YAML step definitions into
+    the executable dictionary structure required by execute_scenario_workflow.
+    """
+    processed_steps = []
+
+    for step in yaml_steps:
+        validators = []
+        for validator_wrapper in step.get("validators", []):
+            # Extract key and configuration (e.g. "substrings_present_all" and ["Emily", "Ryan"])
+            validator_name, config = next(iter(validator_wrapper.items()))
+
+            if validator_name not in VALIDATOR_REGISTRY:
+                raise ValueError(f"Unknown validator wrapper key in YAML: '{validator_name}'")
+
+            factory_function = VALIDATOR_REGISTRY[validator_name]
+
+            # Direct parsing pipeline since everything is a flat list or primitive string
+            if isinstance(config, list):
+                # Special handling for semantic criteria which expects a list parameter directly
+                if validator_name == "semantic_criteria":
+                    validator_instance = factory_function(config)
+                else:
+                    validator_instance = factory_function(*config) if len(config) == 1 else factory_function(config)
+            else:
+                validator_instance = factory_function(config)
+
+            validators.append(validator_instance)
+
+        processed_steps.append({
+            "user_input": step["user_input"],
+            "validators": validators
+        })
+
+    return processed_steps

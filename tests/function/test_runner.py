@@ -11,6 +11,9 @@ async def execute_scenario_workflow(username: str, steps: List[Dict[str, Any]], 
     A test execution engine for chat scenarios defined in an injection array.
     Supports both synchronous token validators and asynchronous semantic/graph validators.
     """
+    testcase_name = "Unknown_Test_Case"
+    if request is not None and hasattr(request, "node"):
+        testcase_name = request.node.name
 
     app_services = await AppServices.create()
 
@@ -29,7 +32,8 @@ async def execute_scenario_workflow(username: str, steps: List[Dict[str, Any]], 
     print("\n" + "=" * 80)
     print(f" WORKING THREAD ID : {thread_id}")
     print(f" USERNAME          : {username}")
-    print(f" USERNAME          : {OLLAMA_MODEL_NAME}")
+    print(f" OLLAMA MODEL      : {OLLAMA_MODEL_NAME}")
+    print(f" Testcase          : {testcase_name}")
     print("=" * 80 + "\n")
 
     # Execute conversational array step-by-step
