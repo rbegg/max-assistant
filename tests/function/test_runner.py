@@ -1,13 +1,15 @@
-
+import inspect
 from typing import List, Dict, Any
 from max_assistant.app_services import AppServices
 from max_assistant.agent.agent import Agent
 from max_assistant.tools import PersonTools
+from max_assistant.config import OLLAMA_MODEL_NAME
 
 
-async def execute_scenario_workflow(username: str, steps: List[Dict[str, Any]]):
+async def execute_scenario_workflow(username: str, steps: List[Dict[str, Any]], request=None):
     """
     A test execution engine for chat scenarios defined in an injection array.
+    Supports both synchronous token validators and asynchronous semantic/graph validators.
     """
 
     app_services = await AppServices.create()
@@ -21,6 +23,14 @@ async def execute_scenario_workflow(username: str, steps: List[Dict[str, Any]]):
         user_data = {}
 
     agent = Agent(app_services.reasoning_engine, user_data)
+    thread_id = agent.get_thread_id()
+
+    # This creates a highly scannable visual header inside PyCharm's console window
+    print("\n" + "=" * 80)
+    print(f" WORKING THREAD ID : {thread_id}")
+    print(f" USERNAME          : {username}")
+    print(f" USERNAME          : {OLLAMA_MODEL_NAME}")
+    print("=" * 80 + "\n")
 
     # Execute conversational array step-by-step
     try:
@@ -31,9 +41,14 @@ async def execute_scenario_workflow(username: str, steps: List[Dict[str, Any]]):
             # Programmatic code execution bypassing AsyncConsoleReader/sys.stdin
             actual_response = await agent.ainvoke(user_input)
 
-            # Fire off pluggable validators
+            # Fire off pluggable validators conditionally
             for validator_fn in validators:
-                validator_fn(actual_response, app_services.db_client)
+                if inspect.iscoroutinefunction(validator_fn):
+                    # Natively await async validators (like semantic evaluations or graph checks)
+                    await validator_fn(actual_response, app_services.db_client)
+                else:
+                    # Execute standard synchronous substring/regex assertions directly
+                    validator_fn(actual_response, app_services.db_client)
 
     finally:
         # Guarantee safe database connection pooling teardown

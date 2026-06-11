@@ -1,5 +1,5 @@
 # tests/conftest.py
-import os
+import pytest
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -13,3 +13,4 @@ if local_env.exists():
     load_dotenv(local_env)
 else:
     print(f"[TEST SETUP] Warning: Root env file not found at {local_env}")
+
