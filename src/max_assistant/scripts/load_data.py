@@ -182,7 +182,7 @@ async def main():
 
         # --- MODIFIED SCHEMA EXPORT ---
         # Call the client's built-in, async, APOC-based get_schema method
-        schema_json_string = await client.get_schema()  #
+        schema_json_string = await client.get_schema_internal()  #
 
         schema_data = None
         if schema_json_string:
