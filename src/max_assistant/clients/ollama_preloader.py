@@ -17,6 +17,7 @@ def create_llm_instance(
         model_name: str,
         base_url: str = "http://localhost:11434",
         temperature: float = 0.0,
+        timeout: float | int = 30.0
 ) -> ChatOllama:
     """
     Synchronously initializes and returns a ChatOllama instance.
@@ -31,6 +32,7 @@ def create_llm_instance(
         model=model_name,
         base_url=base_url,
         temperature=temperature,
+        client_kwargs={"timeout": timeout},
     )
     return llm
 

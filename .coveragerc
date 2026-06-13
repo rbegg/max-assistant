@@ -1,0 +1,20 @@
+[run]
+source =
+    /home/robert/max/services/max-assistant/src/max_assistant
+    tools
+    agent
+    clients
+
+# Crucial for dynamic/background tool invocations from the framework
+parallel = True
+concurrency = thread
+patch = subprocess
+sigterm = true
+
+[plugins]
+# Force automatic interception of subprocess executions
+coverage.plugins =
+    coverage.plugins.subprocess
+
+[report]
+omit = */tests/*

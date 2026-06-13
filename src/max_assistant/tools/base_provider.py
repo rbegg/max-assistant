@@ -127,7 +127,7 @@ class BaseToolProvider:
     async def _safe_execute_query(self, query: str, params: dict | None = None) -> str:
         """
         Executes a raw query and safely returns the JSON stringified result.
-        Ideal for write operations or queries that don't need Pydantic validation.
+        Ideal for writing operations or queries that don't need Pydantic validation.
         """
         try:
             result = await self.db_client.execute_query(query, params or {})

@@ -45,7 +45,29 @@ margaret_in_laws:
     - user_input: "Who are my siblings-in-law"
       validators:
         - semantic_criteria:
-            - Verify that you have one sister-in-law Linda Smith
+            - Verify that you have one sister-in-law or sibling-in-law Linda Smith
+
+margaret_relationships:
+  username: "Margaret.Miller"
+  steps:
+    - user_input: "How is Thomas Miller related to me?"
+      validators:
+        - substrings_present_any: ["Spouse", "Husband"]
+    - user_input: "How is Jennifer Clark related to me?"
+      validators:
+        - substring_present: "daughter"
+    - user_input: "How is Michael Miller related to me?"
+      validators:
+        - substring_present: "son"
+    - user_input: "How is Emily Miller related to me"
+      validators:
+        - substrings_present_any: ["grandchild", "granddaughter"]
+    - user_input: "How is Robert Smith related to me?"
+      validators:
+        - substring_present: "father"
+    - user_input: "How is Eleanor Smith related to me?"
+      validators:
+        - substring_present: "mother"
 
 maragaret_connection_to_arthur:
   username: "Margaret.Miller"
