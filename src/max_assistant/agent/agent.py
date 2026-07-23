@@ -39,6 +39,9 @@ class Agent:
     def set_thread_id(self, thread_id: str) -> None:
         self.config["configurable"]["thread_id"] = thread_id
 
+    def get_thread_id(self) -> str:
+        return self.config["configurable"]["thread_id"]
+
     def set_voice(self, voice: str) -> None:
         self.conversation_state["voice"] = voice
 

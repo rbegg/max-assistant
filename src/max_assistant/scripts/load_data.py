@@ -7,9 +7,13 @@ from argparse import ArgumentParser
 
 # --- MODIFIED ---
 # Remove the synchronous GraphDatabase import
-from max_assistant.scripts.local_config import SCRIPT_DIR
+from max_assistant.scripts.local_config import init_environment, SCRIPT_DIR
+init_environment(True)
+
 from max_assistant.config import NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD
 from max_assistant.clients.neo4j_client import Neo4jClient
+
+
 
 # --- Configuration ---
 DATA_DIR = SCRIPT_DIR / "../../../csv_data"
@@ -178,7 +182,7 @@ async def main():
 
         # --- MODIFIED SCHEMA EXPORT ---
         # Call the client's built-in, async, APOC-based get_schema method
-        schema_json_string = await client.get_schema()  #
+        schema_json_string = await client.get_schema_internal()  #
 
         schema_data = None
         if schema_json_string:

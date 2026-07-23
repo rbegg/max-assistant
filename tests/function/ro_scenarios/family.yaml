@@ -1,0 +1,86 @@
+# tests/scenarios/family_scenarios.yaml
+margaret_family:
+  username: "Margaret.Miller"
+  steps:
+    - user_input: "Who is my spouse?"
+      validators:
+        - substring_present: "Thomas"
+    - user_input: "Who are my children?"
+      validators:
+        - substring_present: "Jennifer"
+        - substring_present: "Michael"
+    - user_input: "What are the names of my grandchildren?"
+      validators:
+        - substrings_present_all: ["Emily", "Ryan", "Olivia"]
+    - user_input: "Do I have great grandchildren?"
+      validators:
+        - substring_present: "Anne"
+    - user_input: "I have forgotten the names of my parents"
+      validators:
+        - substrings_present_all: ["Eleanor", "Smith", "Robert"]
+    - user_input: "What was my mother's maiden name"
+      validators:
+        - substrings_present_all: ["Johnson"]
+    - user_input: "What is my brother's name"
+      validators:
+        - substrings_present_all: ["David"]
+    - user_input: "Do I have a sister"
+      validators:
+        - semantic_criteria:
+            - >
+              Verify that Margaret does not have a sister 
+              anywhere in her immediate family tree.
+
+margaret_in_laws:
+  username: "Margaret.Miller"
+  steps:
+    - user_input: "WHo are my children-in-law"
+      validators:
+        - substrings_present_all: ["Sarah","Miller","James","Clark"]
+    - user_input: "Who are my parents-in-law"
+      validators:
+        - semantic_criteria:
+            - Verify that information is not available
+            - Includes an apology
+    - user_input: "Who are my siblings-in-law"
+      validators:
+        - semantic_criteria:
+            - Verify that you have one sister-in-law or sibling-in-law Linda Smith
+
+margaret_relationships:
+  username: "Margaret.Miller"
+  steps:
+    - user_input: "How is Thomas Miller related to me?"
+      validators:
+        - substrings_present_any: ["Spouse", "Husband"]
+    - user_input: "How is Jennifer Clark related to me?"
+      validators:
+        - substring_present: "daughter"
+    - user_input: "How is Michael Miller related to me?"
+      validators:
+        - substring_present: "son"
+    - user_input: "How is Emily Miller related to me"
+      validators:
+        - substrings_present_any: ["grandchild", "granddaughter"]
+    - user_input: "How is Robert Smith related to me?"
+      validators:
+        - substring_present: "father"
+    - user_input: "How is Eleanor Smith related to me?"
+      validators:
+        - substring_present: "mother"
+
+maragaret_connection_to_arthur:
+  username: "Margaret.Miller"
+  steps:
+    - user_input: "Who is Arthur"
+      validators:
+        - substrings_present_all: ["Smith", "Grandfather", "Black", "friend"]
+    - user_input: "Tell me more about my grandfather"
+      validators:
+        - substrings_present_all: ["born", "1895", "Smith", "Paternal"]
+    - user_input: "How many kids did he have"
+      validators:
+        - substrings_present_any: ["three", "3"]
+    - user_input: "What were their names"
+      validators:
+        - substrings_present_all: ["Clara", "Robert", "George"]

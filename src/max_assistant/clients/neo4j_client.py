@@ -94,20 +94,34 @@ class Neo4jClient:
                 raise
         raise RuntimeError("Failed to connect to Neo4j after all retries.")
 
-    async def get_schema(self) -> str:
+    async def get_schema(self) -> str | None:
         """
-        Fetches a comprehensive schema from Neo4j using the APOC library
-        and caches it.
+        Loads a static JSON schema file (without the checkpointer schema) and caches it
+        """
+        from pathlib import Path
 
-        Raises:
-            Neo4jClientError: If the APOC query fails, returns no data, or is restricted.
-        """
         if self._schema_cache:
             logger.debug("Returning cached Neo4j schema.")
             return self._schema_cache
 
-        if not self.driver:
-            raise Neo4jClientError("Cannot execute query: Neo4j Async Driver is not initialized.")
+        current_dir = Path(__file__).parent.resolve()
+
+        json_path = current_dir / "schema.json"
+
+        with open(json_path, "r", encoding="utf-8") as f:
+            self._schema_cache = f.read()
+
+        return self._schema_cache
+
+
+    async def get_schema_internal(self) -> str:
+        """
+        Fetches a comprehensive schema from Neo4j using the APOC library
+
+        Raises:
+            Neo4jClientError: If the APOC query fails, returns no data, or is restricted.
+        """
+
 
         self._check_circuit()
 
@@ -174,8 +188,7 @@ class Neo4jClient:
                 "relationship_structure": sorted(list(set(relationship_structure)))
             }
 
-            self._schema_cache = json.dumps(schema, indent=2)
-            return self._schema_cache
+            return json.dumps(schema, indent=2)
 
 
         except ServiceUnavailable as e:

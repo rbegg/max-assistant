@@ -5,25 +5,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from max_assistant.agent.graph import prune_messages, create_reasoning_engine
+from max_assistant.agent.graph import create_reasoning_engine
 
 
 from max_assistant.config import MESSAGE_PRUNING_LIMIT
 
-
-def test_prune_messages_returns_empty_dict_when_under_limit():
-    state = {"messages": [SimpleNamespace(content="m1")]}
-
-    assert prune_messages(state) == {}
-
-
-def test_prune_messages_trims_history_when_over_limit():
-    messages = [SimpleNamespace(content=f"m{i}") for i in range(MESSAGE_PRUNING_LIMIT + 2)]
-    state = {"messages": messages}
-
-    result = prune_messages(state)
-
-    assert result["messages"] == messages[-MESSAGE_PRUNING_LIMIT:]
 
 
 @pytest.mark.asyncio

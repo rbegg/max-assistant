@@ -8,55 +8,41 @@ import logging
 import datetime
 import argparse
 import os
-import sys
-from pathlib import Path
 
-# Load environment variables robustly using file-relative paths
-from dotenv import load_dotenv
-
-SCRIPT_DIR = Path(__file__).parent.resolve()
-local_env_file = SCRIPT_DIR / '../.env.local'
-if not load_dotenv(local_env_file):
-    print(f"Failed to load environment variables from {local_env_file}.")
-    exit(1)
-
+from max_assistant.scripts.local_config import init_environment
+init_environment(required=True)
 from max_assistant.config import LOG_LEVEL, DEFAULT_USERNAME
+
 from max_assistant.app_services import AppServices
 from max_assistant.agent.agent import Agent
 from max_assistant.tools import PersonTools
 
 
 class AsyncConsoleReader:
-    """Manages a single, persistent async stream for reading from standard input."""
+    """Debugger-safe reader that runs blocking input in an executor thread."""
 
     def __init__(self):
-        self.reader = None
-        self.transport = None
+        pass
 
     async def initialize(self):
-        """Sets up the read pipe exactly once."""
+        """No-op for compatibility with your existing main() setup."""
+        pass
+
+
+    @staticmethod
+    async def readline(prompt: str) -> str:
+        """Reads input using a thread pool, allowing IDE debuggers to intercept stdin normally."""
         loop = asyncio.get_running_loop()
-        self.reader = asyncio.StreamReader()
-        protocol = asyncio.StreamReaderProtocol(self.reader)
-
-        # Connect to stdin ONCE. This keeps the file descriptor open and fast.
-        self.transport, _ = await loop.connect_read_pipe(lambda: protocol, sys.stdin)
-
-    async def readline(self, prompt: str) -> str:
-        """Reads a single line of input cleanly without blocking the event loop."""
-        print(prompt, end="", flush=True)
-        if not self.reader:
-            await self.initialize()
-
-        line = await self.reader.readline()
-        if not line:  # Handles EOF (Ctrl+D) Safely
+        try:
+            # This safely runs standard input() in a background thread
+            line = await loop.run_in_executor(None, input, prompt)
+            return line
+        except (EOFError, SystemExit):
             raise EOFError()
-        return line.decode().rstrip('\r\n')
 
     def close(self):
-        """Detaches the transport cleanly without violently closing sys.stdin."""
-        if self.transport:
-            self.transport.close()
+        """No-op for compatibility."""
+        pass
 
 
 async def main(log_path=None, username=None):

@@ -1,243 +1,167 @@
+#!/usr/bin/env python3
+"""
+Native Dump Checkpointer Tool for Max Assistant.
+Uses the LangGraph Neo4jSaver object model natively to unpack threads and message lineages.
+"""
+
 import os
 import sys
-import json
-import base64
-import binascii
-from datetime import datetime
+import argparse
+import textwrap
+
+from langchain_core.runnables import RunnableConfig
 from neo4j import GraphDatabase
+from langchain_neo4j.checkpoint import Neo4jSaver
 
-# Import official class components and serialization engines natively
-from langchain_neo4j import Neo4jSaver
-from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
+# Safeguard check guardrail
+if Neo4jSaver is None:
+    print("\n🚨 Framework Discovery Error: Python cannot resolve the Neo4jSaver class path.")
+    print("Please explicitly verify your active environment packages by running:")
+    print("   python3 -c 'import langchain_neo4j; print(langchain_neo4j.__file__)'\n")
+    sys.exit(1)
 
-# Configuration: Reads your environment variables with default local fallbacks
+from local_config import init_environment
+
+init_environment(True)
+
+# Pull system environment parameters
 NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
-NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
+NEO4J_USER = os.getenv("NEO4J_USERNAME", "neo4j")
 NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "password")
+NEO4J_DB = os.getenv("NEO4J_DATABASE", "neo4j")
 
 
-def format_timestamp(version_str):
-    """Extracts hex epoch strings into clean human-readable date-time entries."""
-    if not version_str or version_str == "null":
-        return "N/A"
+def list_active_threads():
+    """Lists all distinct conversation threads ordered by the most recent activity first."""
+
+    # Bypassing saver.list() limitation for global scans by querying unique thread IDs directly
     try:
-        clean_hex = version_str.split('.')[0]
-        if clean_hex.isdigit():
-            ts = float(clean_hex) / 1000.0 if len(clean_hex) > 11 else float(clean_hex)
-        else:
-            ts = int(clean_hex, 16) / 1000.0 if len(clean_hex) > 8 else int(clean_hex, 16)
-        return datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S')
-    except Exception:
-        return "N/A"
+        with GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD)) as db_driver:
+            with db_driver.session(database=NEO4J_DB) as session:
+                result = session.run("""
+                MATCH (n:Thread)
+                RETURN count(n) AS total_threads
+                """)
+                record = result.single()
+                total_threads = record["total_threads"] if record else 0
 
-
-def print_formatted_message(msg):
-    """Natively extracts and formats properties from hydrated LangChain message objects."""
-    if not msg:
+                result = session.run("""
+                MATCH (n:Thread)-[r:HAS_BRANCH]->(b:Branch) 
+                where b.name="main" 
+                RETURN n.thread_id as thread_id, b.created_at as created_at 
+                ORDER BY b.created_at DESC LIMIT 50
+                """)
+                threads = [(record["thread_id"], record["created_at"].isoformat()) for record in result if record["thread_id"]]
+                num_threads = len(threads)
+    except Exception as e:
+        print(f"  [!] Failed to query unique thread IDs from Neo4j: {e}")
         return
 
-    msg_type = getattr(msg, "type", "message")
-    content = getattr(msg, "content", "")
-    tool_calls = getattr(msg, "tool_calls", [])
-    tool_call_id = getattr(msg, "tool_call_id", "Unknown")
+    if not threads:
+        print("  [!] No thread records found")
+        return
 
-    if isinstance(msg, dict):
-        msg_type = msg.get("type", "message")
-        content = msg.get("content", "")
-        tool_calls = msg.get("tool_calls", [])
-        tool_call_id = msg.get("tool_call_id", "Unknown")
-
-    if msg_type == "human":
-        token = "[Human]"
-    elif msg_type == "ai":
-        token = "[AI]"
-    elif msg_type == "tool":
-        token = f"[Tool (ID: {tool_call_id})]"
-    elif msg_type == "system":
-        token = "[System]"
-    else:
-        token = f"[{str(msg_type).upper()}]"
-
-    content_str = json.dumps(content, indent=4) if isinstance(content, (dict, list)) else str(content)
-
-    print(f"      {token}:")
-    if "\n" in content_str:
-        for line in content_str.splitlines():
-            print(f"          {line}")
-    else:
-        print(f"          {content_str}")
-
-    if tool_calls:
-        print("      Action [Tool Calls]:")
-        for call in tool_calls:
-            name = getattr(call, 'name', call.get('name') if isinstance(call, dict) else 'Unknown')
-            args = getattr(call, 'args', call.get('args') if isinstance(call, dict) else {})
-            print(f"          • Tool Name: {name}")
-            print(f"            Arguments: {json.dumps(args)}")
+    print("\n" + "=" * 80)
+    print(f"{'ACTIVE CONVERSATION THREADS':^80}")
+    print(f"Listing {num_threads} most recent of {total_threads} total threads")
+    print("=" * 80 + "\n")
+    print("Thread_Id                             Created at")
+    print("------------------------------------  ----------")
+    for thread_id, created_at in threads:
+        print(f"{thread_id}  {created_at}")
 
 
-def get_threads_timeline():
-    """Queries structural channels to find all unique thread identifiers in the database."""
-    query = """
-    MATCH (c:Checkpoint)-[:HAS_CHANNEL]->(ch:ChannelState)
-    WITH CASE 
-           WHEN c.id CONTAINS '.' THEN split(c.id, '.')[0]
-           WHEN c.thread_id IS NOT NULL THEN c.thread_id
-           ELSE "1837a6a1-26e6-454c-b938-73d05cfbc92e"
-         END AS thread_id, ch
-    RETURN thread_id, min(ch.version) AS initial_version, max(ch.version) AS latest_version
-    ORDER BY latest_version DESC
-    """
-    threads_list = []
-    seen = set()
-    try:
-        with GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD)) as driver:
-            with driver.session() as session:
-                result = session.run(query)
-                for record in result:
-                    t_id = record["thread_id"]
-                    if t_id and t_id != "null" and t_id not in seen:
-                        seen.add(t_id)
-                        threads_list.append({
-                            "thread_id": t_id,
-                            "initial_time": format_timestamp(record["initial_version"])
-                        })
-    except Exception as e:
-        print(f"[!] Error scanning threads timeline indices: {e}")
-    return threads_list
+def dump_thread_transcript(saver: Neo4jSaver, thread_id: str):
+    """Dumps sequential conversational transcripts by traversing the framework's state checkpoints."""
+    print("\n" + "=" * 80)
+    print(f"{f'TRANSCRIPT FOR THREAD: {thread_id}':^80}")
+    print("=" * 80 + "\n")
 
+    target_config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
 
-def dump_thread_with_official_api(target_thread_id):
-    """
-    Uses the official Neo4jSaver connection wrapper and serialization API
-    to pull, decode, and render conversation milestones for a thread.
-    """
-    print(f"\n[+] Extracting official state history for Thread: '{target_thread_id}'")
-    print("=" * 100)
+    # Fetch all historical timeline transitions associated with this thread scope
+    history = list(saver.list(target_config))
 
-    # Reconstruct snapshot states directly via channel aggregations grouped by step versions
-    query = """
-    MATCH (c:Checkpoint)-[:HAS_CHANNEL]->(ch:ChannelState)
-    WHERE c.id STARTS WITH $thread_id 
-       OR c.id CONTAINS $thread_id 
-       OR c.thread_id = $thread_id
-       OR $thread_id = "1837a6a1-26e6-454c-b938-73d05cfbc92e"
-    WITH ch
-    ORDER BY ch.version ASC
-    WITH ch.version AS checkpoint_id, collect({channel: ch.channel, type: ch.type, blob: ch.blob}) AS shards
-    RETURN checkpoint_id, shards
-    ORDER BY checkpoint_id ASC
-    """
+    if not history:
+        print(f"  [!] No active checkpoints found matching thread ID: {thread_id}")
+        return
 
-    try:
-        serializer = JsonPlusSerializer()
-        counter = 0
+    # Reverse the collection array to trace the conversation sequentially (Oldest -> Newest)
+    history.reverse()
 
-        with GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD)) as driver:
-            with driver.session() as session:
-                result = session.run(query, thread_id=target_thread_id)
+    print(f"Total Checkpoints Found: {len(history)}\n")
 
-                for record in result:
-                    cp_id = record["checkpoint_id"]
-                    shards = record["shards"]
+    for idx, cp_tuple in enumerate(history, 1):
+        cp_id = cp_tuple.config.get("configurable", {}).get("checkpoint_id")
+        metadata = cp_tuple.metadata or {}
 
-                    source_node = "Unknown"
-                    step_turn = "N/A"
-                    messages = None
+        print(f" [{idx}] Checkpoint ID : {cp_id}")
+        print(f"     Graph Workflow: Source={metadata.get('source')} | Step={metadata.get('step')}")
+        print("     Messages Transcript:")
 
-                    for shard in shards:
-                        channel_name = shard.get("channel")
-                        blob_payload = shard.get("blob")
+        # The framework's tuple automatically manages binary decoding (JSON/MsgPack) under the hood
+        checkpoint_dict = cp_tuple.checkpoint
+        channel_values = checkpoint_dict.get("channel_values", {})
 
-                        if not blob_payload or blob_payload == "null":
-                            continue
+        # Intercept the specific text-oriented state channel array directly
+        messages = channel_values.get("messages", [])
 
-                        try:
-                            # Safely unbox JSON strings versus raw byte payloads
-                            if isinstance(blob_payload, str):
-                                try:
-                                    raw_bytes = base64.b64decode(blob_payload)
-                                except Exception:
-                                    raw_bytes = blob_payload.encode('utf-8')
-                            else:
-                                raw_bytes = bytes(blob_payload)
+        if messages:
+            for msg in messages:
+                raw_msg  = getattr(msg, "type", type(msg).__name__.lower())
+                if isinstance(raw_msg, (bytes, bytearray)):
+                    msg_type = raw_msg.decode("utf8", errors="replace")
+                else:
+                    msg_type = str(raw_msg)
 
-                            # Handle system metrics via the JSON layer
-                            if channel_name == "__metadata__":
-                                try:
-                                    decoded_meta = json.loads(raw_bytes.decode('utf-8'))
-                                except Exception:
-                                    decoded_meta = serializer.loads_typed(("json", raw_bytes.decode('utf-8')))
+                if "human" in msg_type:
+                    label = "[HUMAN]"
+                elif "ai" in msg_type:
+                    label = "[AI]"
+                elif "tool" in msg_type:
+                    label = "[TOOL]"
+                else:
+                    label = f"[{msg_type.upper()}]"
 
-                                if isinstance(decoded_meta, dict):
-                                    source_node = decoded_meta.get("source", source_node)
-                                    step_turn = decoded_meta.get("step", step_turn)
-
-                            # Handle conversation streams via the msgpack layer
-                            elif any(x in str(channel_name).lower() for x in ["messages", "history", "chat"]):
-                                try:
-                                    parsed_dict = json.loads(raw_bytes.decode('utf-8'))
-                                    if isinstance(parsed_dict, dict) and "__serde_data__" in parsed_dict:
-                                        msgpack_bytes = binascii.unhexlify(parsed_dict["__serde_data__"])
-                                        messages = serializer.loads_typed(("msgpack", msgpack_bytes))
-                                except Exception:
-                                    messages = serializer.loads_typed(("json", raw_bytes.decode('utf-8')))
-
-                        except Exception:
-                            continue
-
-                    if not messages:
-                        continue
-
-                    counter += 1
-                    print(f"THREAD ID           : {target_thread_id}")
-                    print(f"  [{counter}] Checkpoint ID : {cp_id}")
-                    print(f"      Source Node   : {source_node}")
-                    print(f"      Step Turn     : {step_turn}")
-                    print("      Messages Transcript:")
-
-                    if isinstance(messages, dict) and ("messages" in messages or "v" in messages):
-                        messages = messages.get("messages", messages.get("v", []))
-
-                    if not isinstance(messages, list):
-                        messages = [messages]
-
-                    for msg in messages:
-                        print_formatted_message(msg)
-
-                    print("-" * 50)
-
-                if counter == 0:
-                    print(f"\n[!] Complete. No conversational records were captured on thread '{target_thread_id}'.")
-                print("=" * 100)
-
-    except Exception as e:
-        print(f"\n[X] Native API processing failure: {e}")
+                content = getattr(msg, "content", str(msg))
+                prefix = f"         {label:<9}: "
+                indented_content = textwrap.indent(content, " " * len(prefix))[len(prefix):]
+                print(f"{prefix}{indented_content}")
+        else:
+            print("         (No active message frames in this state channel step)")
+        print("-" * 80)
 
 
 def main():
-    if len(sys.argv) > 1:
-        target_thread = sys.argv[1]
-        dump_thread_with_official_api(target_thread)
-        return
+    parser = argparse.ArgumentParser(description="Query and inspect LangGraph checkpoints natively using Neo4jSaver.")
+    parser.add_argument("thread_id", nargs="?", help="Optional Target Thread ID to view conversation logs.")
+    args = parser.parse_args()
 
-    print("Connecting to database to discover available thread indices...")
-    threads = get_threads_timeline()
+    try:
+        if hasattr(Neo4jSaver, 'from_conn_string'):
+            with Neo4jSaver.from_conn_string(
+                    uri=NEO4J_URI,
+                    user=NEO4J_USER,
+                    password=NEO4J_PASSWORD,
+                    database=NEO4J_DB
+            ) as saver:
+                if args.thread_id:
+                    dump_thread_transcript(saver, args.thread_id)
+                else:
+                    list_active_threads()
+        else:
+            # Alternate instance routing matching standard langchain_neo4j constructor layouts
+            driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+            saver = Neo4jSaver(driver=driver, database=NEO4J_DB)
 
-    if not threads:
-        print("\n[!] No active conversation logs or thread shards were discovered in this database instance.")
-        return
+            if args.thread_id:
+                dump_thread_transcript(saver, args.thread_id)
+            else:
+                list_active_threads()
 
-    print("\nAvailable Thread Sessions in Database:")
-    print("-" * 75)
-    for t in threads:
-        print(f" • ID: {t['thread_id']:<36} | Started: {t['initial_time']}")
-    print("-" * 75)
-
-    latest_thread = threads[0]["thread_id"]
-    print(f"\n[+] No thread ID specified. Automatically targeting newest thread session: '{latest_thread}'")
-    dump_thread_with_official_api(latest_thread)
-
+    except Exception as e:
+        print(f"🚨 Failed to execute native Neo4jSaver operation: {e}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

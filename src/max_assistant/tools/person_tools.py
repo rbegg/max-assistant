@@ -29,8 +29,27 @@ class PersonTools(BaseToolProvider):
     A class that encapsulates person-related tools and holds a
     dedicated Neo4j client instance.
     """
+    MAP_SIGNATURE_TO_RELATION = {
+        # --- 1 Hop Relationships ---
+        (('MARRIED_TO', True),): {"F": "wife", "M": "husband", "default": "spouse"},
+        (('MARRIED_TO', False),): {"F": "wife", "M": "husband", "default": "spouse"},
+        (('PARENT_OF', True),): {"F": "daughter", "M": "son", "default": "child"},
+        (('PARENT_OF', False),): {"F": "mother", "M": "father", "default": "parent"},
 
-    def __init__(self, db_client: Neo4jClient, llm: ChatOllama = None):
+        # --- 2 Hop Relationships (The specific issue you found!) ---
+        # Sibling: Path goes up to parent (incoming), then down to sibling (outgoing)
+        (('PARENT_OF', False), ('PARENT_OF', True)): {"F": "sister", "M": "brother", "default": "sibling"},
+
+        # Grandchild: Path goes down to child (outgoing), then down to grandchild (outgoing)
+        (('PARENT_OF', True), ('PARENT_OF', True)): {"F": "granddaughter", "M": "grandson",
+                                                     "default": "grandchild"},
+
+        # Grandparent: Path goes up to parent (incoming), then up to grandparent (incoming)
+        (('PARENT_OF', False), ('PARENT_OF', False)): {"F": "grandmother", "M": "grandfather",
+                                                       "default": "grandparent"},
+    }
+
+    def __init__(self, db_client: Neo4jClient, llm: ChatOllama | None = None):
         """
         Initializes the toolset with a specific Neo4j client.
         """
@@ -39,42 +58,41 @@ class PersonTools(BaseToolProvider):
 
 
     @staticmethod
-    def _get_relationship_description(path_data: Dict[str, Any]) -> str:
+    def _get_relationship_description(path_data: Dict[str, Any], user_id: str) -> str:
         """
-        Synchronous helper to convert a Neo4j path into a human-readable description.
-        Replaces the old _process_relationship_path.
+        Convert a Neo4j path into a human-readable description,
+        safely handling relationship direction and sequences.
         """
-        rel_types = path_data.get('rel_types', [])
-        gender = path_data.get('gender')
-        num_rels = len(rel_types)
-        description = "related"  # Default
+        rel_details = path_data.get('rel_details', [])
+        gender = path_data.get('gender') or "unknown"
 
-        if num_rels == 1:
-            rel = rel_types[0]
-            if rel == 'MARRIED_TO':
-                description = "wife" if gender == 'female' else "husband" if gender == 'male' else "spouse"
-            elif rel == 'PARENT_OF':
-                description = "mother" if gender == 'female' else "father" if gender == 'male' else "parent"
-            elif rel == 'PARTNER_OF':
-                description = "partner"
-            elif rel == 'FRIEND_OF':
-                description = "friend"
-            elif rel == 'SUPPORTED_BY':
-                description = "support contact"
-            elif rel == 'LIVES_WITH':
-                description = "lives with"
+        if not rel_details:
+            return "related"
 
-        elif num_rels == 2:
-            if rel_types == ['PARENT_OF', 'PARENT_OF']:
-                description = "sister" if gender == 'female' else "brother" if gender == 'male' else "sibling"
-            elif rel_types == ['MARRIED_TO', 'PARENT_OF'] or rel_types == ['PARTNER_OF', 'PARENT_OF']:
-                description = "mother-in-law" if gender == 'female' else "father-in-law" if gender == 'male' else "parent-in-law"
+        # 1. Track the "flow" of the path.
+        # We create a tuple of ((TYPE, IS_OUTGOING), (TYPE, IS_OUTGOING)...)
+        # This completely differentiates a sibling from a grandchild!
+        path_signature = []
+        current_node = user_id
 
-        elif num_rels > 1:
-            # Fallback for more complex paths
-            description = f"family ({rel_types[0]})"
+        for rel in rel_details:
+            is_outgoing = (rel['start'] == current_node)
+            path_signature.append((rel['type'], is_outgoing))
+            # Move our pointer to the next node in the path sequence
+            current_node = rel['end'] if is_outgoing else rel['start']
 
-        return description
+        path_tuple = tuple(path_signature)
+
+        # 2. Map exact directional signatures directly to roles
+
+
+        # 3. Resolve the relationship role
+        role_mapping = PersonTools.MAP_SIGNATURE_TO_RELATION.get(path_tuple)
+        if role_mapping:
+            return role_mapping.get(gender, role_mapping.get("default", "related"))
+
+        # Fallback default text for complex or unrecognized multi-hop paths
+        return f"family ({rel_details[0]['type']})"
 
     async def _find_relationship_path(self, person_id: str, user_id: str) -> Dict[str, Any] | None:
         """
@@ -88,9 +106,13 @@ class PersonTools(BaseToolProvider):
 
         # First, check for close family relationships
         family_query = """
-            MATCH path = shortestPath((u:User {id: $user_id})-[r:MARRIED_TO|PARENT_OF|PARTNER_OF*1..2]-(p {id: $person_id}))
+            MATCH path = shortestPath((u:User {id: $user_id})-[r:MARRIED_TO|PARENT_OF|PARTNER_OF*1..5]-(p {id: $person_id}))
             WHERE u <> p
-            RETURN [r IN relationships(path) | type(r)] AS rel_types, p.gender as gender
+            RETURN [r IN relationships(path) | {
+                type: type(r),
+                start: startNode(r).id,
+                end: endNode(r).id
+            }] AS rel_details, p.gender as gender
             ORDER BY length(path) ASC
             LIMIT 1
             """
@@ -102,9 +124,13 @@ class PersonTools(BaseToolProvider):
 
             # If no family path, check for other relationships
             other_query = """
-                MATCH path = shortestPath((u:User {id: $user_id})-[*1..3]-(p {id: $person_id}))
+                MATCH path = shortestPath((u:User {id: $user_id})-[*1..5]-(p {id: $person_id}))
                 WHERE u <> p
-                RETURN [r IN relationships(path) | type(r)] AS rel_types, p.gender as gender
+                RETURN [r IN relationships(path) | {
+                    type: type(r),
+                    start: startNode(r).id,
+                    end: endNode(r).id
+                }] AS rel_details, p.gender as gender
                 ORDER BY length(path) ASC
                 LIMIT 1
                 """
@@ -142,7 +168,7 @@ class PersonTools(BaseToolProvider):
         user_id = self._get_verified_user_id(user_info)
 
         query = """
-            MATCH (u:User {id: $user_id})-[*1..3]-(p:Person|Family|Friend|Support)
+            MATCH (u:User {id: $user_id})-[*1..5]-(p:Person|Family|Friend|Support)
             WHERE ($first_name IS NULL OR toLower(p.firstName) CONTAINS $first_name)
               AND ($last_name IS NULL OR toLower(p.lastName) CONTAINS $last_name)
             RETURN properties(p) AS person, labels(p) as labels
@@ -168,7 +194,10 @@ class PersonTools(BaseToolProvider):
 
                     # _find_relationship_path now safely handles DB errors internally
                     path_data = await self._find_relationship_path(person_id, user_id)
-                    relationship_desc = self._get_relationship_description(path_data) if path_data else "unknown"
+                    if path_data:
+                        relationship_desc = self._get_relationship_description(path_data, user_id)
+                    else:
+                        relationship_desc = "unknown"
 
                     validated_results.append({
                         "person": validated_person.model_dump(mode='json'),
@@ -269,7 +298,10 @@ class PersonTools(BaseToolProvider):
                     {"error": "No relationship found", "details": "No relationship path was found in the graph."})
 
             # 3. Process the path
-            description = self._get_relationship_description(path_data)
+            if path_data:
+                description = self._get_relationship_description(path_data, user_id)
+            else:
+                description = "unknown"
 
             return json.dumps({
                 "relationship": description,
@@ -350,14 +382,14 @@ class PersonTools(BaseToolProvider):
             StructuredTool.from_function(
                 name="find_person_by_name",
                 func=None,
-                coroutine=self.find_person_by_name,  # No .__wrapped__ needed anymore!
+                coroutine=self.find_person_by_name,
                 description=self.find_person_by_name.__doc__,
                 handle_tool_error=self.format_system_tool_error,
             ),
             StructuredTool.from_function(
                 name="find_person_by_title",
                 func=None,
-                coroutine=self.find_person_by_title,  # No .__wrapped__ needed anymore!
+                coroutine=self.find_person_by_title,
                 description=self.find_person_by_title.__doc__,
                 handle_tool_error=self.format_system_tool_error,
             ),

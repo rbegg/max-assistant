@@ -1,0 +1,41 @@
+# tests/scenarios/people_scenarios.yaml
+margaret_friends:
+  username: "Margaret.Miller"
+  steps:
+    - user_input: "do i have a friend named pam"
+      validators:
+        - substrings_present_all: ["Pam","Reid"]
+    - user_input: "Is David Lee a friend"
+      validators:
+        - semantic_criteria:
+            - Verify david is not a friend, but rather a support worker or nurse
+    - user_input: "which of my friends are older than i am"
+      validators:
+        - substrings_present_all:
+            - "Quincy"
+            - "Arthur Black"
+            - "Steve"
+            - "Fiona"
+            - "Zachary"
+            - "Betty White"
+
+margaret_support_staff:
+  username: "Margaret.Miller"
+  steps:
+    - user_input: "What are the names of the nurses at my residence"
+      validators:
+        - substrings_present_all: ["David Lee","Patricia Finch"]
+    - user_input: "how about psw"
+      validators:
+        - substrings_present_all: ["Tom Wilson", "Maria Gonzalez"]
+    - user_input: "Is Kenji a doctor"
+      validators:
+        - semantic_criteria:
+            - "Verify that he is a doctor"
+        - substring_present: "Surgeon"
+    - user_input: "Who is my case manager"
+      validators:
+          - substring_present: "Jenkins"
+    - user_input: "do i have a friend named pam"
+      validators:
+        - substring_present: "Reid"

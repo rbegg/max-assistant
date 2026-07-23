@@ -1,0 +1,12 @@
+# tests/scenarios/basic.yaml
+Basic_prompts:
+  username: "Margaret.Miller"
+  steps:
+    - user_input: "What time is it"
+      validators:
+        - semantic_criteria:
+            - "Contains a valid time"
+    - user_input: "Tell me a joke"
+      validators:
+        - semantic_criteria:
+            - "contains a joke"
