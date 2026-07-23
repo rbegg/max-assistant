@@ -17,7 +17,7 @@ def create_llm_instance(
         model_name: str,
         base_url: str = "http://localhost:11434",
         temperature: float = 0.0,
-        timeout: float | int = 30.0
+        timeout: float | int = 120.0
 ) -> ChatOllama:
     """
     Synchronously initializes and returns a ChatOllama instance.
@@ -53,12 +53,12 @@ async def preload_model_async(
     chain = llm | parser
 
     retries = 0
+    start_time = time.monotonic()
+
+    logger.info(f"🔥 Sending async warm-up request to load '{llm.model}' into memory.")
     try:
         while retries < max_retries:
             try:
-                logger.info(f"🔥 Sending async warm-up request to load '{llm.model}' into memory.")
-                start_time = time.monotonic()
-
                 await chain.ainvoke(
                     "Hi",
                     config=RunnableConfig(configurable={"keep_alive": keep_alive})
@@ -83,10 +83,21 @@ async def preload_model_async(
                     logging.error(
                         f"Exceeded maximum retries for warm-up of '{llm.model}'. The model may not be preloaded.")
                     return
+            except httpx.TimeoutException as e:
+                retries += 1
+                logger.warning(
+                    f"⏳ Ollama warm-up request timed out ({type(e).__name__}) (Attempt {retries}/{max_retries}). "
+                    f"Model '{llm.model}' is likely still cold-loading weights in the background. Retrying..."
+                )
+                if retries < max_retries:
+                    await asyncio.sleep(1)
             except Exception as e:
-                logging.error(f"\n❌ FAILED TO WARM UP OLLAMA for model '{llm.model}'.")
+                logging.error(f"\n❌ FAILED TO WARM UP OLLAMA for model '{llm.model}'{type(e).__name__}", exc_info=True)
                 logging.error(f"   Error: {e}")
                 return
+        logger.error(
+            f"❌ Exceeded maximum retries ({max_retries}) for warm-up of '{llm.model}'. The model may not be preloaded."
+        )
     finally:
         if ready_event:
             ready_event.set()
