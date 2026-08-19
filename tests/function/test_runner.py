@@ -1,4 +1,6 @@
 import inspect
+import time
+import unicodedata
 from typing import List, Dict, Any
 from max_assistant.app_services import AppServices
 from max_assistant.agent.agent import Agent
@@ -28,6 +30,8 @@ async def execute_scenario_workflow(username: str, steps: List[Dict[str, Any]], 
     agent = Agent(app_services.reasoning_engine, user_data)
     thread_id = agent.get_thread_id()
 
+    execution_times = []
+
     # This creates a highly scannable visual header inside PyCharm's console window
     print("\n" + "=" * 80)
     print(f" WORKING THREAD ID : {thread_id}")
@@ -42,8 +46,22 @@ async def execute_scenario_workflow(username: str, steps: List[Dict[str, Any]], 
             user_input = step["user_input"]
             validators = step.get("validators", [])
 
+            # Track start time using perf_counter for high resolution
+            start_time = time.perf_counter()
+
             # Programmatic code execution bypassing AsyncConsoleReader/sys.stdin
             actual_response = await agent.ainvoke(user_input)
+
+            # Track end time, calculate duration, and append to list
+            end_time = time.perf_counter()
+            step_duration = end_time - start_time
+            execution_times.append(step_duration)
+
+            # Normalize LLM Output
+            if isinstance(actual_response, str):
+                # Safely converts \u202f, \xa0, etc. into standard spaces " "
+                # without destroying newlines (\n)
+                actual_response = unicodedata.normalize("NFKC", actual_response)
 
             # Fire off pluggable validators conditionally
             for validator_fn in validators:
@@ -53,6 +71,17 @@ async def execute_scenario_workflow(username: str, steps: List[Dict[str, Any]], 
                 else:
                     # Execute standard synchronous substring/regex assertions directly
                     validator_fn(actual_response, app_services.db_client)
+
+        # Print the execution time metrics at the end of the scenario
+        total_time = sum(execution_times)
+        avg_time = total_time / len(execution_times) if execution_times else 0
+
+        print("\n" + "=" * 80)
+        print(f" PERFORMANCE SUMMARY")
+        print(f" Total ainvoke calls : {len(execution_times)}")
+        print(f" Total Execution Time: {total_time:.4f} seconds")
+        print(f" Average Time / Step : {avg_time:.4f} seconds")
+        print("=" * 80 + "\n")
 
     finally:
         # Guarantee safe database connection pooling teardown

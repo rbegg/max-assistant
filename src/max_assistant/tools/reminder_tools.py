@@ -132,6 +132,7 @@ class ReminderTools(BaseToolProvider):
         """
         logger.info("Background reminder poller service activated.")
 
+        # Language=cypher
         check_query = """
                       WITH datetime($now) AS now
                           MATCH (u: User)-[:HAS_YEAR]->()-[:HAS_MONTH]->()-[:HAS_DAY]->()-[:HAS_TASK]->(t:Task)
