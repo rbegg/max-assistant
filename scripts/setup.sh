@@ -28,10 +28,13 @@ cd $SRC_DIR
 pwd
 python3 -m max_assistant.scripts.load_data
 
-echo "***"
-echo "*** authenticating gmail credentials from ENV"
-echo "***"
-
-export BROWSER=wslview
-
-python3 -m max_assistant.scripts.gmail_authenticate $GOOGLE_SENDER_EMAIL
+# Optional setup for sending emails with gmail
+if [ -n "$GOOGLE_CLIENT_ID" ]; then
+    echo "***"
+    echo "*** authenticating gmail credentials from ENV"
+    echo $GOOGLE_SENDER_EMAIL
+    echo "***"
+    python3 -m max_assistant.scripts.gmail_authenticate $GOOGLE_SENDER_EMAIL
+else
+    echo "*** Skipping setup for gmail authentication"
+fi
