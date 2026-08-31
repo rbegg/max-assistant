@@ -50,7 +50,7 @@ class AppServices:
         self._preload_task = preload_task
 
     @classmethod
-    async def create(cls) -> "AppServices":
+    async def create(cls, model_name: Optional[str] = None) -> "AppServices":
         """
         Asynchronously creates and initializes all application services.
         This is the single source of truth for service setup.
@@ -60,7 +60,7 @@ class AppServices:
             llm_ready_event = asyncio.Event()
 
             # 1. Initialize Core Clients (Concurrently)
-            db_client, llm, preload_task = await cls._initialize_clients(llm_ready_event)
+            db_client, llm, preload_task = await cls._initialize_clients(llm_ready_event, model_name)
 
             # 2. Initialize and Populate Tool Registry
             tool_registry = cls._initialize_tool_registry(db_client, llm)
@@ -86,12 +86,17 @@ class AppServices:
 
     # FIX: Change from @staticmethod to @classmethod so 'cls' is valid
     @classmethod
-    async def _initialize_clients(cls, llm_ready_event: asyncio.Event) -> Tuple[
-        Neo4jClient, ChatOllama, asyncio.Task]:
+    async def _initialize_clients(
+            cls,
+            llm_ready_event: asyncio.Event,
+            model_name: Optional[str] = None
+    ) -> Tuple[Neo4jClient, ChatOllama, asyncio.Task]:
         """Initializes the Neo4j client and the Ollama LLM concurrently."""
         logger.info("Initializing Neo4j client and LLM...")
 
-        llm = create_llm_instance(OLLAMA_MODEL_NAME, OLLAMA_BASE_URL, temperature=0)
+        active_model = model_name or OLLAMA_MODEL_NAME
+
+        llm = create_llm_instance(active_model, OLLAMA_BASE_URL, temperature=0)
 
         try:
             # Now 'cls' is perfectly bound and safe to call

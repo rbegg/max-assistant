@@ -213,3 +213,5 @@ __marimo__/
 .idea
 logs/
 digest.txt
+tests/results/
+tests/function/results/

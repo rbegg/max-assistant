@@ -7,9 +7,11 @@ questions against the Neo4j database.
 import json
 import re
 import logging
+import asyncio
 from typing import Annotated
 
-from langchain_ollama import ChatOllama
+from langchain_ollama import OllamaLLM, ChatOllama
+from langchain_core.prompts import PromptTemplate
 from langchain_core.tools import StructuredTool
 from langgraph.prebuilt import InjectedState
 
@@ -27,17 +29,35 @@ class GeneralQueryTools(BaseToolProvider):
     A toolset that uses an LLM to dynamically generate and execute
     Cypher queries for ad-hoc questions.
     """
-
     def __init__(self, db_client: Neo4jClient, llm: ChatOllama):
         """
         Initializes the toolset with a Neo4j client and an LLM.
         """
         super().__init__(db_client, llm)
         if llm is None:
-            raise ValueError("GeneralQueryTools strictly requires an LLM instance to generate Cypher.")
+            raise ValueError("GeneralQueryTools strictly requires an LLM instance.")
 
-        self.cypher_generation_chain = CYPHER_GENERATION_PROMPT | llm
-        logger.debug("GeneralQueryTools initialized with Neo4j client and LLM.")
+        # Create a raw text completion LLM pointing to the exact same model
+        raw_llm = OllamaLLM(model=llm.model)
+
+        # Use a standard string template, avoiding Chat roles entirely
+        RAW_CYPHER_PROMPT = PromptTemplate.from_template("""
+        You are a Neo4j Cypher expert. Write a single, read-only Cypher query to answer the user's question.
+
+        Schema Context:
+        {schema}
+
+        User Question: {question}
+
+        CRITICAL RULES:
+        - Output ONLY the raw Cypher query.
+        - Wrap the query in a ```cypher code block.
+        - DO NOT include <think> tags, reasoning, or explanations.
+        """)
+
+        # Bind the prompt to the raw completion model
+        self.cypher_generation_chain = RAW_CYPHER_PROMPT | raw_llm
+        logger.debug("GeneralQueryTools initialized with raw OllamaLLM generator.")
 
     @staticmethod
     def _parse_cypher_from_response(response_content: str) -> str:
@@ -95,13 +115,21 @@ class GeneralQueryTools(BaseToolProvider):
 
             # 2. Generate the Cipher query
             logger.debug("Generating Cypher query...")
-            response = await self.cypher_generation_chain.ainvoke({
-                "schema": schema_str,
-                "question": question,
-                #"user_info": user_info_json
-            })
+            try:
+                # Force a 10-second hard limit on generation
+                response_text = await asyncio.wait_for(
+                    self.cypher_generation_chain.ainvoke({
+                        "schema": schema_str,
+                        "question": question,
+                    }),
+                    timeout=20.0
+                )
+            except asyncio.TimeoutError:
+                logger.error("LLM Cypher generation timed out.")
+                return json.dumps({"error": "Query generation took too long."})
 
-            response_text = response.content if isinstance(response.content, str) else str(response.content)
+
+            logger.info(f"RAW LLM CYPHER RESPONSE:\n{response_text}")
 
             cypher_query = self._parse_cypher_from_response(response_text)
             logger.info(f"Generated Cypher: {cypher_query}")

@@ -1,9 +1,11 @@
 # tests/conftest.py
+import os
 import json
 import socket
 from urllib import request
 import pytest
 from pathlib import Path
+from datetime import datetime
 
 import yaml
 from dotenv import load_dotenv
@@ -12,6 +14,14 @@ from dotenv import load_dotenv
 TESTS_DIR = Path(__file__).parent.resolve()
 WORKSPACE_ROOT = TESTS_DIR.parent
 SCENARIOS_DIR = TESTS_DIR / 'ro_scenarios'
+
+# set up filename to record results
+RESULTS_DIR = TESTS_DIR / 'results'
+RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+
+timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+filename = f"test_run_{timestamp}.jsonl"
+RESULTS_FILE = RESULTS_DIR / filename
 
 # Initialize local env variables before importing local files
 local_env = WORKSPACE_ROOT / '..' / '.env.local'
@@ -24,8 +34,15 @@ else:
 from tests.function.validators import build_steps_from_yaml
 from max_assistant.config import OLLAMA_MODEL_NAME, NEO4J_URI, OLLAMA_BASE_URL
 
+# Define models to test (override via env var or list here)
+MODELS_TO_TEST = [
+    model.strip()
+    for model in os.getenv("TEST_MODELS", OLLAMA_MODEL_NAME).split(",")
+]
+
 
 def verify_neo4j_connectivity(uri: str) -> bool:
+    # noinspection PyBroadException
     try:
         clean_address = uri.replace("bolt://", "").replace("neo4j://", "")
         host, port = clean_address.split(":")
@@ -36,6 +53,7 @@ def verify_neo4j_connectivity(uri: str) -> bool:
 
 
 def verify_ollama_connectivity(url: str) -> bool:
+    # noinspection PyBroadException
     try:
         base_url = url.rstrip("/")
         with request.urlopen(f"{base_url}/", timeout=2.0) as response:
@@ -46,6 +64,7 @@ def verify_ollama_connectivity(url: str) -> bool:
 
 def verify_ollama_model_pulled(url: str, model_name: str) -> bool:
     """Hits the local Ollama registry catalog to ensure the requested model is pulled."""
+    # noinspection PyBroadException
     try:
         base_url = url.rstrip("/")
         # Hit Ollama's local tags listing endpoint
@@ -90,10 +109,11 @@ def ensure_required_services_are_alive():
         )
 
     # 3. Audit Target LLM Availability
-    if not verify_ollama_model_pulled(OLLAMA_BASE_URL, OLLAMA_MODEL_NAME):
+    missing_models = [m for m in MODELS_TO_TEST if not verify_ollama_model_pulled(OLLAMA_BASE_URL, m)]
+    if missing_models:
         pytest.exit(
-            f"\n❌ ENVIRONMENT FAILURE: The configured model '{OLLAMA_MODEL_NAME}' is not downloaded.\n"
-            f"Please run `ollama pull {OLLAMA_MODEL_NAME}` in your terminal before running tests.\n",
+            f"\n❌ The following models are not pulled in Ollama: {missing_models}\n"
+            f"Please run `ollama pull <model>` for missing models.\n",
             returncode=1
         )
 
@@ -101,7 +121,28 @@ def ensure_required_services_are_alive():
 
 
 def pytest_generate_tests(metafunc):
-    """Pure hook engine with guaranteed file-sorting serialization order."""
+    """
+        This pytest hook performs the following steps:
+        - Discovery: It scans the tests/function/ro_scenarios/ directory for all .yaml and .yml files.
+        - Ordering: It explicitly sorts these files alphabetically to ensure a consistent execution order.
+        - Data Extraction: It opens each YAML file and iterates through the scenarios defined inside.
+        - Processing: For each model: runs all scenarios for that model.
+                For each scenario, it:
+                - Extracts the username.
+                - Processes the steps using a build_steps_from_yaml utility.
+                - Creates a scenario_payload.
+        - Injection: It uses metafunc.parametrize("dynamic_scenario_data", argvalues, ids=ids) to inject this data into
+                 any test function that requests the dynamic_scenario_data fixture.
+    """
+    # This will print out exactly what pytest considers the file/test targets
+    print(f"\nDEBUG: Pytest targets: {metafunc.config.args}")
+    print(f"\nDEBUG: Full option dict: {metafunc.config.option}")
+
+    # 1. Parametrize Models
+    if "model_name" in metafunc.fixturenames:
+        metafunc.parametrize("model_name", MODELS_TO_TEST)
+
+    # 2. Parametrize YAML Scenarios
     if "dynamic_scenario_data" in metafunc.fixturenames:
         # Fetch files and sort them alphabetically
         raw_files = list(SCENARIOS_DIR.glob("*.yaml")) + list(SCENARIOS_DIR.glob("*.yml"))
@@ -125,3 +166,24 @@ def pytest_generate_tests(metafunc):
                 ids.append(f"{file_path.stem}-{scenario_key}")
 
         metafunc.parametrize("dynamic_scenario_data", argvalues, ids=ids)
+
+
+# noinspection PyUnusedLocal
+@pytest.hookimpl(tryfirst=True, hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    outcome = yield
+    report = outcome.get_result()
+
+    # We only want to process the data when the main test execution phase finishes
+    if report.when == "call":
+
+        # Extract the dictionary you attached in the test function
+        results = getattr(item, "results", None)
+
+        if results:
+            # noinspection PyUnresolvedReferences
+            results["pytest_status"] = report.outcome
+
+            # Append the dictionary to the JSONL file safely
+            with open(RESULTS_FILE, "a", encoding="utf-8") as f:
+                f.write(json.dumps(results) + "\n")

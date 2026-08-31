@@ -28,6 +28,9 @@ margaret_support_staff:
     - user_input: "how about psw"
       validators:
         - substrings_present_all: ["Tom Wilson", "Maria Gonzalez"]
+    - user_input: "Who is Kenji"
+      validators:
+        - substring_present: "Surgeon"
     - user_input: "Is Kenji a doctor"
       validators:
         - semantic_criteria:

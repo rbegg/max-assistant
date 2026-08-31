@@ -86,6 +86,7 @@ use the token placeholder $user_id when generating the query and it will be prov
 - Only generate ONE Cypher query.
 - The query MUST be read-only (use MATCH, OPTIONAL MATCH, WHERE, RETURN).
 - DO NOT use write operations like CREATE, SET, MERGE, DELETE.
+- CRITICAL: NO PREAMBLE. NO EXPLANATIONS. DO NOT SAY "Here is the query".
 - Embed any values from the question directly into the query except for userid. Do not use parameters for any other
 values.
 - Only return the Cypher query, wrapped in a markdown code block like this:

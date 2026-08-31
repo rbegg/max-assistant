@@ -1,14 +1,22 @@
 import inspect
 import time
 import unicodedata
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
+
 from max_assistant.app_services import AppServices
 from max_assistant.agent.agent import Agent
 from max_assistant.tools import PersonTools
-from max_assistant.config import OLLAMA_MODEL_NAME
+from tests.function.types import ScenarioResult, StepResult
 
 
-async def execute_scenario_workflow(username: str, steps: List[Dict[str, Any]], request=None):
+async def execute_scenario_workflow(
+        username: str,
+        steps: List[Dict[str, Any]],
+        model_name: str,
+        request=None,
+        results: Optional[ScenarioResult] = None,
+
+):
     """
     A test execution engine for chat scenarios defined in an injection array.
     Supports both synchronous token validators and asynchronous semantic/graph validators.
@@ -17,34 +25,46 @@ async def execute_scenario_workflow(username: str, steps: List[Dict[str, Any]], 
     if request is not None and hasattr(request, "node"):
         testcase_name = request.node.name
 
-    app_services = await AppServices.create()
+    app_services = await AppServices.create(model_name=model_name)
+    execution_times: List[float ] = []
+    responses: List[str] = []
+    success = False
+    thread_id = None
+    step_results: List[StepResult] = []
 
-    if not app_services.llm_ready_event.is_set():
-        await app_services.llm_ready_event.wait()
+    try:
+        if not app_services.llm_ready_event.is_set():
+            await app_services.llm_ready_event.wait()
 
-    person_tools = PersonTools(app_services.db_client)
-    user_data = await person_tools.get_user_info_internal(username)
-    if "error" in user_data:
-        user_data = {}
+        person_tools = PersonTools(app_services.db_client)
+        user_data = await person_tools.get_user_info_internal(username)
+        if "error" in user_data:
+            user_data = {}
 
-    agent = Agent(app_services.reasoning_engine, user_data)
-    thread_id = agent.get_thread_id()
+        agent = Agent(app_services.reasoning_engine, user_data)
+        thread_id = agent.get_thread_id()
 
-    execution_times = []
-
-    # This creates a highly scannable visual header inside PyCharm's console window
-    print("\n" + "=" * 80)
-    print(f" WORKING THREAD ID : {thread_id}")
-    print(f" USERNAME          : {username}")
-    print(f" OLLAMA MODEL      : {OLLAMA_MODEL_NAME}")
-    print(f" Testcase          : {testcase_name}")
-    print("=" * 80 + "\n")
+        # This creates a highly scannable visual header inside PyCharm's console window
+        print("\n" + "=" * 80)
+        print(f" WORKING THREAD ID : {thread_id}")
+        print(f" USERNAME          : {username}")
+        print(f" OLLAMA MODEL      : {model_name}")
+        print(f" Testcase          : {testcase_name}")
+        print("=" * 80 + "\n")
 
     # Execute conversational array step-by-step
-    try:
-        for step in steps:
+
+        for index, step in enumerate(steps, start=1):
+
+            if "user_input" not in step:
+                raise ValueError(f"Step {index} in testcase '{testcase_name}' is missing required 'user_input' key.")
+
             user_input = step["user_input"]
             validators = step.get("validators", [])
+
+            # Uniform normalization of user input to match LLM standards
+            if isinstance(user_input, str):
+                user_input = unicodedata.normalize("NFKC", user_input)
 
             # Track start time using perf_counter for high resolution
             start_time = time.perf_counter()
@@ -62,6 +82,7 @@ async def execute_scenario_workflow(username: str, steps: List[Dict[str, Any]], 
                 # Safely converts \u202f, \xa0, etc. into standard spaces " "
                 # without destroying newlines (\n)
                 actual_response = unicodedata.normalize("NFKC", actual_response)
+            responses.append(actual_response)
 
             # Fire off pluggable validators conditionally
             for validator_fn in validators:
@@ -72,18 +93,39 @@ async def execute_scenario_workflow(username: str, steps: List[Dict[str, Any]], 
                     # Execute standard synchronous substring/regex assertions directly
                     validator_fn(actual_response, app_services.db_client)
 
-        # Print the execution time metrics at the end of the scenario
-        total_time = sum(execution_times)
-        avg_time = total_time / len(execution_times) if execution_times else 0
+            step_results.append(StepResult(
+                step=index,
+                user_input=user_input,
+                actual_result=actual_response,
+                elapsed_time=step_duration
+            ))
 
-        print("\n" + "=" * 80)
-        print(f" PERFORMANCE SUMMARY")
-        print(f" Total ainvoke calls : {len(execution_times)}")
-        print(f" Total Execution Time: {total_time:.4f} seconds")
-        print(f" Average Time / Step : {avg_time:.4f} seconds")
-        print("=" * 80 + "\n")
+        success = True
 
     finally:
         # Guarantee safe database connection pooling teardown
         if app_services.db_client:
             await app_services.db_client.close()
+
+        if results is not None:
+            results["testcase_name"] = testcase_name
+            results["thread_id"] = thread_id
+            results["model"] = model_name
+            results["success"] = success
+            results["total_execution_time"] = sum(execution_times) if execution_times else 0
+            results["step_results"] = step_results
+
+        # Print the execution time metrics at the end of the scenario
+        if execution_times:
+            total_time = sum(execution_times)
+            avg_time = total_time / len(execution_times) if execution_times else 0
+
+            print("\n" + "=" * 80)
+            print(f" PERFORMANCE SUMMARY")
+            print(f" Total ainvoke calls : {len(execution_times)}")
+            print(f" Total Execution Time: {total_time:.4f} seconds")
+            print(f" Average Time / Step : {avg_time:.4f} seconds")
+            print("=" * 80 + "\n")
+
+
+
