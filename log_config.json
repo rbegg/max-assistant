@@ -3,8 +3,7 @@
     "disable_existing_loggers": false,
     "formatters": {
         "standard_flat": {
-            "format": "[%(levelname)s] %(asctime)s - %(name)s (%(filename)s:%(lineno)d): %(message)s",
-            "datefmt": "%Y-%m-%d %H:%M:%S"
+            "format": "[%(levelname)s] %(asctime)s - %(name)s (%(filename)s:%(lineno)d): %(message)s"
         }
     },
     "handlers": {
@@ -48,7 +47,7 @@
             "propagate": true
         },
         "max_assistant.tools":{
-            "level": "DEBUG",
+            "level": "INFO",
             "propagate": true
         }
     }
